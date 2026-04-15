@@ -1,0 +1,17 @@
+{
+	"InstallScripts" : 
+	[
+		"D:/Programming/Personal/emuGBDS/build/cmake_install.cmake",
+		"D:/Programming/Personal/emuGBDS/build/mgba-master/cmake_install.cmake",
+		"D:/Programming/Personal/emuGBDS/build/mgba-master/src/debugger/cmake_install.cmake",
+		"D:/Programming/Personal/emuGBDS/build/mgba-master/src/feature/cmake_install.cmake",
+		"D:/Programming/Personal/emuGBDS/build/mgba-master/src/arm/cmake_install.cmake",
+		"D:/Programming/Personal/emuGBDS/build/mgba-master/src/core/cmake_install.cmake",
+		"D:/Programming/Personal/emuGBDS/build/mgba-master/src/gb/cmake_install.cmake",
+		"D:/Programming/Personal/emuGBDS/build/mgba-master/src/gba/cmake_install.cmake",
+		"D:/Programming/Personal/emuGBDS/build/mgba-master/src/sm83/cmake_install.cmake",
+		"D:/Programming/Personal/emuGBDS/build/mgba-master/src/util/cmake_install.cmake",
+		"D:/Programming/Personal/emuGBDS/build/mgba-master/test/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

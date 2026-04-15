@@ -1,0 +1,24 @@
+^D:\PROGRAMMING\PERSONAL\EMUGBDS\BUILD\CMAKEFILES\D10B96B012619D93078CEE9F9CD544D4\MGBA-VERSION-INFO.RULE
+setlocal
+cd D:\Programming\Personal\emuGBDS\mgba-master
+if %errorlevel% neq 0 goto :cmEnd
+D:
+if %errorlevel% neq 0 goto :cmEnd
+"C:\Program Files\CMake\bin\cmake.exe" -DBINARY_NAME=mgba -DCONFIG_FILE=D:/Programming/Personal/emuGBDS/mgba-master/src/core/version.c.in -DOUT_FILE=D:/Programming/Personal/emuGBDS/build/mgba-master/version.c -P D:/Programming/Personal/emuGBDS/mgba-master/version.cmake
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^D:\PROGRAMMING\PERSONAL\EMUGBDS\MGBA-MASTER\CMAKELISTS.TXT
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/Programming/Personal/emuGBDS -BD:/Programming/Personal/emuGBDS/build --check-stamp-file D:/Programming/Personal/emuGBDS/build/mgba-master/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

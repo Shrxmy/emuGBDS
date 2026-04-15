@@ -1,0 +1,6 @@
+D:\Programming\Personal\emuGBDS\host\src\main.cpp;D:\Programming\Personal\emuGBDS\build\emugbds.dir\Release\main.obj
+D:\Programming\Personal\emuGBDS\host\src\core\ModeCoordinator.cpp;D:\Programming\Personal\emuGBDS\build\emugbds.dir\Release\ModeCoordinator.obj
+D:\Programming\Personal\emuGBDS\host\src\frontend\GbaSdlFrontend.cpp;D:\Programming\Personal\emuGBDS\build\emugbds.dir\Release\GbaSdlFrontend.obj
+D:\Programming\Personal\emuGBDS\host\src\cores\MGbaCoreAdapter.cpp;D:\Programming\Personal\emuGBDS\build\emugbds.dir\Release\MGbaCoreAdapter.obj
+D:\Programming\Personal\emuGBDS\host\src\cores\MelonDsCoreAdapter.cpp;D:\Programming\Personal\emuGBDS\build\emugbds.dir\Release\MelonDsCoreAdapter.obj
+D:\Programming\Personal\emuGBDS\host\src\melonds\MelonDsPlatformShim.cpp;D:\Programming\Personal\emuGBDS\build\emugbds.dir\Release\MelonDsPlatformShim.obj

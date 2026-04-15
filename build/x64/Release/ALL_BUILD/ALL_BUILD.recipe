@@ -1,0 +1,20 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <ProjectOutputs>
+    <ProjectOutput>
+      <FullPath>D:\Programming\Personal\emuGBDS\build\x64\Release\ZERO_CHECK</FullPath>
+    </ProjectOutput>
+    <ProjectOutput>
+      <FullPath>D:\Programming\Personal\emuGBDS\build\mgba-master\x64\Release\mgba-version-info</FullPath>
+    </ProjectOutput>
+    <ProjectOutput>
+      <FullPath>D:\Programming\Personal\emuGBDS\build\Release\emugbds.exe</FullPath>
+    </ProjectOutput>
+    <ProjectOutput>
+      <FullPath>D:\Programming\Personal\emuGBDS\build\x64\Release\ALL_BUILD</FullPath>
+    </ProjectOutput>
+  </ProjectOutputs>
+  <ContentFiles />
+  <SatelliteDlls />
+  <NonRecipeFileRefs />
+</Project>

@@ -1,0 +1,4 @@
+# CMake generation dependency list for this directory.
+D:/Programming/Personal/emuGBDS/melonDS-master/cmake/FixInterfaceIncludes.cmake
+D:/Programming/Personal/emuGBDS/melonDS-master/src/CMakeLists.txt
+D:/Programming/Personal/emuGBDS/melonDS-master/src/version.h.in

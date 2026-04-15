@@ -1,0 +1,61 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\ahbm.cpp" />
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\apbp.cpp" />
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\btdmp.cpp" />
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\disassembler.cpp" />
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\dma.cpp" />
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\timer.cpp" />
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\memory_interface.cpp" />
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\mmio.cpp" />
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\parser.cpp" />
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\processor.cpp" />
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\teakra.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\include\teakra\disassembler.h">
+      <Filter>..\include\teakra</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\include\teakra\teakra.h">
+      <Filter>..\include\teakra</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\ahbm.h" />
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\apbp.h" />
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\bit.h" />
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\btdmp.h" />
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\common_types.h" />
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\crash.h" />
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\decoder.h" />
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\dma.h" />
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\timer.h" />
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\icu.h" />
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\interpreter.h" />
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\matcher.h" />
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\memory_interface.h" />
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\mmio.h" />
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\operand.h" />
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\processor.h" />
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\register.h" />
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\shared_memory.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\CMakeLists.txt">
+      <Filter>Other Files</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="..">
+      <UniqueIdentifier>{A1A354B3-F320-38A2-A132-8055E9B01BB7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="..\include">
+      <UniqueIdentifier>{B18E7643-0093-37B6-A85C-0724CE7A6863}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="..\include\teakra">
+      <UniqueIdentifier>{8F87F262-E6D9-3DB8-98F3-B0FAC9EAAFFF}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Other Files">
+      <UniqueIdentifier>{6CB18BC7-CFF6-3110-8364-BEB0A2D7A83E}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

@@ -1,0 +1,340 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\core\bitmap-cache.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\core\cache-set.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\core\cheats.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\core\config.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\core\core.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\core\directories.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\core\input.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\core\interface.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\core\lockstep.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\core\log.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\core\map-cache.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\core\mem-search.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\core\rewind.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\core\serialize.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\core\sync.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\core\thread.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\core\tile-cache.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\core\timing.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\core\library.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\arm\arm.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\arm\decoder-arm.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\arm\decoder.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\arm\decoder-thumb.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\arm\isa-arm.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\arm\isa-thumb.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gb\audio.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\audio.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\bios.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\cart\ereader.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\cart\gpio.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\cart\matrix.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\cart\unlicensed.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\cart\vfame.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\cheats.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\cheats\codebreaker.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\cheats\gameshark.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\cheats\parv3.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\core.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\dma.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\gba.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\hle-bios.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\input.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\io.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\memory.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\overrides.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\renderers\cache-set.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\renderers\common.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\renderers\gl.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\renderers\software-bg.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\renderers\software-mode0.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\renderers\software-obj.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\renderers\video-software.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\savedata.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\serialize.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\sharkport.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\sio.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\sio\gbp.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\timer.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\video.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\circle-buffer.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\configuration.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\crc32.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\formatting.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\gbk-table.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\hash.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\md5.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\sha1.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\string.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\table.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\vector.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\vfs.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\audio-buffer.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\audio-resampler.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\convolve.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\elf-read.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\geometry.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\image.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\image\export.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\image\font.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\image\png-io.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\interpolator.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\patch.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\patch-fast.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\patch-ips.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\patch-ups.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\ring-fifo.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\sfo.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\text-codec.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\build\mgba-master\version.c">
+      <Filter>Generated sources</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\vfs\vfs-mem.c">
+      <Filter>Virtual files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\vfs\vfs-fifo.c">
+      <Filter>Virtual files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\util\vfs\vfs-fd.c">
+      <Filter>Virtual files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\platform\windows\memory.c">
+      <Filter>Windows-specific code</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\platform\windows\vfs-w32.c">
+      <Filter>Virtual files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\third-party\inih\ini.c">
+      <Filter>Third-party code</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\sio\dolphin.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\sio\lockstep.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\extra\battlechip.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\gba\extra\proxy.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\feature\commandline.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\feature\proxy-backend.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\feature\thread-proxy.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\feature\video-backend.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\feature\video-logger.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\mgba-master\src\feature\updater.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="D:\Programming\Personal\emuGBDS\mgba-master\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Generated sources">
+      <UniqueIdentifier>{9B2E4B39-EB53-37AF-8D9B-008E22D35045}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{5A20ADA6-25B9-3DD0-8BA3-089F13A76DC4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Third-party code">
+      <UniqueIdentifier>{E9C9CDDA-3B09-3584-926E-FC199B01515E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Virtual files">
+      <UniqueIdentifier>{57973CBB-D435-3FE7-BA24-1F6B2D0911CA}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Windows-specific code">
+      <UniqueIdentifier>{3102E12D-7C4D-381E-BF92-477D1609332C}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

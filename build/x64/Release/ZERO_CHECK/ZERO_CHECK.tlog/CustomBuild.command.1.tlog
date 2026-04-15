@@ -1,0 +1,10 @@
+^D:\PROGRAMMING\PERSONAL\EMUGBDS\BUILD\CMAKEFILES\0BB51250C7D3167F8CE61582F6B09208\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/Programming/Personal/emuGBDS -BD:/Programming/Personal/emuGBDS/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file D:/Programming/Personal/emuGBDS/build/emuGBDS.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

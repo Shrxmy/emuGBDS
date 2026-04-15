@@ -1,0 +1,15 @@
+# CMake generation dependency list for this directory.
+C:/Program Files/CMake/share/cmake-4.2/Modules/CMakeDependentOption.cmake
+C:/Program Files/CMake/share/cmake-4.2/Modules/CheckIPOSupported.cmake
+C:/Program Files/CMake/share/cmake-4.2/Modules/CheckIPOSupported/CMakeLists-C.txt.in
+C:/Program Files/CMake/share/cmake-4.2/Modules/CheckIPOSupported/CMakeLists-CXX.txt.in
+C:/Program Files/CMake/share/cmake-4.2/Modules/CheckIPOSupported/foo.c
+C:/Program Files/CMake/share/cmake-4.2/Modules/CheckIPOSupported/foo.cpp
+C:/Program Files/CMake/share/cmake-4.2/Modules/CheckIPOSupported/main.c
+C:/Program Files/CMake/share/cmake-4.2/Modules/CheckIPOSupported/main.cpp
+C:/Program Files/CMake/share/cmake-4.2/Modules/CheckLibraryExists.cmake
+C:/Program Files/CMake/share/cmake-4.2/Modules/CheckSymbolExists.cmake
+C:/Program Files/CMake/share/cmake-4.2/Modules/FindPackageMessage.cmake
+D:/Programming/Personal/emuGBDS/melonDS-master/CMakeLists.txt
+D:/Programming/Personal/emuGBDS/melonDS-master/cmake/Sanitizers.cmake
+D:/Programming/Personal/emuGBDS/melonDS-master/cmake/SetupCCache.cmake

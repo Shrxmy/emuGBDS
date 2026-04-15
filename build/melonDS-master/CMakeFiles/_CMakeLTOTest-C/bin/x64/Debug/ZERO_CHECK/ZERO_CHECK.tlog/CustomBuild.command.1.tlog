@@ -1,0 +1,10 @@
+^D:\PROGRAMMING\PERSONAL\EMUGBDS\BUILD\MELONDS-MASTER\CMAKEFILES\_CMAKELTOTEST-C\BIN\CMAKEFILES\33D0482D8B306EC4558C0E5B778ED8FF\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/Programming/Personal/emuGBDS/build/melonDS-master/CMakeFiles/_CMakeLTOTest-C/src -BD:/Programming/Personal/emuGBDS/build/melonDS-master/CMakeFiles/_CMakeLTOTest-C/bin --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file D:/Programming/Personal/emuGBDS/build/melonDS-master/CMakeFiles/_CMakeLTOTest-C/bin/lto-test.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

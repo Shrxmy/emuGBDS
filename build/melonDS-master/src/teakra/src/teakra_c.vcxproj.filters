@@ -1,0 +1,29 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\disassembler_c.cpp">
+      <Filter>Other Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\teakra_c.cpp">
+      <Filter>Other Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\include\teakra\disassembler_c.h">
+      <Filter>Other Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\include\teakra\teakra_c.h">
+      <Filter>Other Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="D:\Programming\Personal\emuGBDS\melonDS-master\src\teakra\src\CMakeLists.txt">
+      <Filter>Other Files</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Other Files">
+      <UniqueIdentifier>{6CB18BC7-CFF6-3110-8364-BEB0A2D7A83E}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
