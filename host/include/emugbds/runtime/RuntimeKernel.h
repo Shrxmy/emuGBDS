@@ -1,7 +1,5 @@
 #pragma once
 
-#include "emugbds/av/AudioPipeline.h"
-#include "emugbds/av/VideoPipeline.h"
 #include "emugbds/core/IEmuCore.h"
 #include "emugbds/runtime/Types.h"
 
@@ -32,8 +30,6 @@ private:
     static std::optional<core::EmuMode> ResolveMode(const BootConfig& config);
     core::BootRequest BuildCoreRequest(const BootConfig& config) const;
     bool SwitchToGbaFromSlot2(std::string& error);
-    bool SetupGbaAvPipelines(std::string& error);
-    void ClearAvOutputs();
     static TransitionIntent ConvertTransition(const core::TransitionEvent& event);
 
     std::unique_ptr<core::IEmuCore> ds_core_;
@@ -46,10 +42,6 @@ private:
     OutputBundle last_output_{};
     uint64_t frame_index_ = 0;
     bool trace_transition_ = false;
-    av::VideoPipeline gba_video_pipeline_;
-    av::AudioPipeline gba_audio_pipeline_;
-    bool gba_av_ready_ = false;
-    bool gba_av_supported_ = false;
 };
 
 } // namespace emugbds::runtime

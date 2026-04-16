@@ -1,4 +1,0 @@
-D:/Programming/Personal/emuGBDS/build/CMakeFiles/emugbds.dir
-D:/Programming/Personal/emuGBDS/build/CMakeFiles/PACKAGE.dir
-D:/Programming/Personal/emuGBDS/build/CMakeFiles/ALL_BUILD.dir
-D:/Programming/Personal/emuGBDS/build/CMakeFiles/ZERO_CHECK.dir

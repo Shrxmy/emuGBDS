@@ -36,6 +36,8 @@
 /build-*/
 /mgba-master/
 /melonDS-master/
+/bios/
+/roms/
 /CMakeFiles/
 /CMakeCache.txt
 /cmake_install.cmake

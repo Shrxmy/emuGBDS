@@ -13,19 +13,17 @@
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "EMUGBDS_ENABLE_MELONDS": "OFF",
-        "EMUGBDS_ENABLE_MGBA": "OFF"
+        "EMUGBDS_ENABLE_MELONDS": "OFF"
       }
     },
     {
-      "name": "thirdparty-clang-release",
-      "displayName": "Clang Release (Third-Party Cores)",
+      "name": "nds-clang-release",
+      "displayName": "Clang Release (NDS Third-Party Core)",
       "generator": "Visual Studio 17 2022",
       "toolset": "ClangCL",
       "binaryDir": "${sourceDir}/build-clang-vs",
       "cacheVariables": {
-        "EMUGBDS_ENABLE_MELONDS": "ON",
-        "EMUGBDS_ENABLE_MGBA": "ON"
+        "EMUGBDS_ENABLE_MELONDS": "ON"
       }
     }
   ],
@@ -39,8 +37,8 @@
       ]
     },
     {
-      "name": "build-thirdparty-clang-release",
-      "configurePreset": "thirdparty-clang-release",
+      "name": "build-nds-clang-release",
+      "configurePreset": "nds-clang-release",
       "configuration": "Release",
       "targets": [
         "emugbds"

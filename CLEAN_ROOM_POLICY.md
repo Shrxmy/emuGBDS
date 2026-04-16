@@ -7,7 +7,7 @@ This document defines how to avoid accidental code-copy contamination.
 ## Scope
 
 - Applies to all code under `host/` and any newly created project-owned directories.
-- Does not change the original licenses of vendored upstream trees (for example `melonDS-master/`, `mgba-master/`, `sdl/`).
+- Does not change the original licenses of vendored upstream trees (for example `melonDS-master/`, `sdl/`).
 - Project-owned code licensing is documented in the top-level `LICENSE` (`GPL-3.0-or-later`).
 
 ## Core Rule

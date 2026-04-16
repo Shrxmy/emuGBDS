@@ -65,8 +65,8 @@ bool ModeCoordinator::Boot(const BootRequest& request, std::string& error) {
             error = "DS mode requested but DS core is unavailable";
             return false;
         }
-        if (!request.nds_rom_path.has_value()) {
-            error = "DS mode requires --nds <path>";
+        if (!request.nds_rom_path.has_value() && !slot2_rom_path_.has_value()) {
+            error = "DS mode requires --nds <path> or --slot2 <path> for firmware Slot-2 boot";
             return false;
         }
         if (!ds_core_->Configure(request, error)) {
@@ -84,7 +84,9 @@ bool ModeCoordinator::Boot(const BootRequest& request, std::string& error) {
         if (slot2_rom_path_.has_value() && !ds_core_->SetSecondaryRom(*slot2_rom_path_, error)) {
             return false;
         }
-        if (!ds_core_->LoadPrimaryRom(*request.nds_rom_path, error)) {
+        const std::filesystem::path primary_ds_path =
+            request.nds_rom_path.has_value() ? *request.nds_rom_path : std::filesystem::path{};
+        if (!ds_core_->LoadPrimaryRom(primary_ds_path, error)) {
             return false;
         }
         active_core_ = ds_core_.get();

@@ -10,20 +10,17 @@ This repository contains third-party source trees. Their original licenses and n
 
 ## Included Upstream Projects
 
-1. melonDS
-- Path: `melonDS-master/`
-- Upstream: https://github.com/melonDS-emu/melonDS
-- License: GPL-3.0-or-later (see upstream `LICENSE`)
-
-2. mGBA
-- Path: `mgba-master/`
-- Upstream: https://github.com/mgba-emu/mgba
-- License: MPL-2.0 (see upstream `LICENSE`)
-
-3. SDL
+1. SDL
 - Path: `sdl/`
 - Upstream: https://github.com/libsdl-org/SDL
 - License: zlib (see distributed SDL license files)
+
+## Optional External Integrations (Not Vendored)
+
+1. melonDS
+- Optional local path: `melonDS-master/`
+- Upstream: https://github.com/melonDS-emu/melonDS
+- License: GPL-3.0-or-later (see upstream `LICENSE`)
 
 ## Project-Owned Code
 

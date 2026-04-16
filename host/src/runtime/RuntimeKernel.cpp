@@ -1,11 +1,6 @@
 #include "emugbds/runtime/RuntimeKernel.h"
 
 #include "emugbds/cores/InHouseGbaCoreAdapter.h"
-#include "emugbds/cores/MGbaCoreAdapter.h"
-
-#if EMUGBDS_HAS_MGBA
-#include <mgba/core/core.h>
-#endif
 
 #include <iostream>
 
@@ -29,20 +24,10 @@ bool RuntimeKernel::Boot(const BootConfig& config, std::string& error) {
     frame_index_ = 0;
     last_transition_.reset();
     last_output_ = {};
-    gba_av_ready_ = false;
-    gba_av_supported_ = false;
-    gba_video_pipeline_.Reset();
-    gba_audio_pipeline_.Reset();
-    ClearAvOutputs();
 
     core::BootRequest core_request = BuildCoreRequest(config);
 
-    if (auto* gba_adapter = dynamic_cast<cores::MGbaCoreAdapter*>(gba_core_.get())) {
-        if (config.gba_bios_path.has_value() && !gba_adapter->SetBiosPath(*config.gba_bios_path, error)) {
-            state_ = RuntimeState::Error;
-            return false;
-        }
-    } else if (auto* inhouse_adapter = dynamic_cast<cores::InHouseGbaCoreAdapter*>(gba_core_.get())) {
+    if (auto* inhouse_adapter = dynamic_cast<cores::InHouseGbaCoreAdapter*>(gba_core_.get())) {
         if (config.gba_bios_path.has_value() && !inhouse_adapter->SetBiosPath(*config.gba_bios_path, error)) {
             state_ = RuntimeState::Error;
             return false;
@@ -59,8 +44,8 @@ bool RuntimeKernel::Boot(const BootConfig& config, std::string& error) {
             state_ = RuntimeState::Error;
             return false;
         }
-        if (!config.nds_rom_path.has_value()) {
-            error = "DS mode requires --nds <path>";
+        if (!config.nds_rom_path.has_value() && !slot2_rom_path_.has_value()) {
+            error = "DS mode requires --nds <path> or --slot2 <path> for firmware Slot-2 boot";
             state_ = RuntimeState::Error;
             return false;
         }
@@ -76,7 +61,9 @@ bool RuntimeKernel::Boot(const BootConfig& config, std::string& error) {
             state_ = RuntimeState::Error;
             return false;
         }
-        if (!ds_core_->LoadPrimaryRom(*config.nds_rom_path, error)) {
+        const std::filesystem::path primary_ds_path =
+            config.nds_rom_path.has_value() ? *config.nds_rom_path : std::filesystem::path{};
+        if (!ds_core_->LoadPrimaryRom(primary_ds_path, error)) {
             state_ = RuntimeState::Error;
             return false;
         }
@@ -107,11 +94,6 @@ bool RuntimeKernel::Boot(const BootConfig& config, std::string& error) {
             return false;
         }
         active_core_ = gba_core_.get();
-        gba_av_supported_ = dynamic_cast<cores::MGbaCoreAdapter*>(active_core_) != nullptr;
-        if (gba_av_supported_ && !SetupGbaAvPipelines(error)) {
-            state_ = RuntimeState::Error;
-            return false;
-        }
     }
 
     state_ = RuntimeState::Running;
@@ -146,31 +128,9 @@ bool RuntimeKernel::Tick(TickResult& result, std::string& error) {
     last_output_.stats.state = state_;
     last_output_.stats.frame_index = frame_index_;
     last_output_.transition.reset();
-    ClearAvOutputs();
+    last_output_.video.reset();
+    last_output_.audio.reset();
     result.status = TickStatus::FrameAdvanced;
-
-    if (active_mode() == core::EmuMode::GBA && gba_av_supported_) {
-        if (!gba_av_ready_ && !SetupGbaAvPipelines(error)) {
-            state_ = RuntimeState::Error;
-            return false;
-        }
-
-        runtime::VideoFrame video_frame{};
-        if (!gba_video_pipeline_.CaptureGbaFrame(video_frame, error)) {
-            state_ = RuntimeState::Error;
-            return false;
-        }
-        last_output_.video = video_frame;
-
-        runtime::AudioChunk audio_chunk{};
-        if (!gba_audio_pipeline_.PullGbaAudio(audio_chunk, error)) {
-            state_ = RuntimeState::Error;
-            return false;
-        }
-        if (audio_chunk.sample_count > 0) {
-            last_output_.audio = audio_chunk;
-        }
-    }
 
     if (trace_transition_ && active_mode() == core::EmuMode::DS) {
         std::cout << "[runtime] frame=" << frame_index_ << " mode=DS\n";
@@ -206,40 +166,12 @@ bool RuntimeKernel::Tick(TickResult& result, std::string& error) {
 }
 
 bool RuntimeKernel::InjectInput(const InputSnapshot& input, std::string& error) {
+    (void)input;
     if (state_ != RuntimeState::Running || !active_core_) {
         error = "Runtime kernel is not in a state that can accept input";
         return false;
     }
-
-    if (active_mode() != core::EmuMode::GBA) {
-        return true;
-    }
-
-#if !EMUGBDS_HAS_MGBA
-    (void)input;
-    error = "GBA input injection is unavailable because mGBA support is disabled";
-    return false;
-#else
-    auto* gba_adapter = dynamic_cast<cores::MGbaCoreAdapter*>(active_core_);
-    if (!gba_adapter) {
-        return true;
-    }
-
-    mCore* native_core = gba_adapter->NativeCore();
-    if (!native_core) {
-        error = "mGBA core is not initialized";
-        return false;
-    }
-
-    if (input.gba_press_mask != 0) {
-        native_core->addKeys(native_core, input.gba_press_mask);
-    }
-    if (input.gba_release_mask != 0) {
-        native_core->clearKeys(native_core, input.gba_release_mask);
-    }
-
     return true;
-#endif
 }
 
 bool RuntimeKernel::PollOutputs(OutputBundle& output) const {
@@ -256,11 +188,6 @@ void RuntimeKernel::Shutdown() noexcept {
     }
     active_core_ = nullptr;
     state_ = RuntimeState::Stopped;
-    gba_av_ready_ = false;
-    gba_av_supported_ = false;
-    gba_video_pipeline_.Reset();
-    gba_audio_pipeline_.Reset();
-    ClearAvOutputs();
     last_output_.stats.state = state_;
 }
 
@@ -324,56 +251,9 @@ bool RuntimeKernel::SwitchToGbaFromSlot2(std::string& error) {
         return false;
     }
     active_core_ = gba_core_.get();
-    gba_av_supported_ = dynamic_cast<cores::MGbaCoreAdapter*>(active_core_) != nullptr;
-    if (gba_av_supported_ && !SetupGbaAvPipelines(error)) {
-        return false;
-    }
     std::cout << "[runtime] switched active core to GBA using Slot-2 ROM '"
               << slot2_rom_path_->string() << "' at frame " << frame_index_ << ".\n";
     return true;
-}
-
-bool RuntimeKernel::SetupGbaAvPipelines(std::string& error) {
-#if !EMUGBDS_HAS_MGBA
-    error = "GBA AV pipeline is unavailable because mGBA support is disabled";
-    return false;
-#else
-    auto* gba_adapter = dynamic_cast<cores::MGbaCoreAdapter*>(active_core_);
-    if (!gba_adapter) {
-        error = "Active core is not an mGBA adapter";
-        return false;
-    }
-
-    auto* native_core = gba_adapter->NativeCore();
-    if (!native_core) {
-        error = "mGBA core pointer is null";
-        return false;
-    }
-
-    gba_video_pipeline_.Reset();
-    gba_audio_pipeline_.Reset();
-
-    if (!gba_video_pipeline_.InitializeForGba(native_core, error)) {
-        return false;
-    }
-    // mGBA keeps a dummy renderer until reset-time renderer selection.
-    // After binding a host video buffer, force one reset so GBA software
-    // renderer becomes active and writes into that buffer.
-    if (!gba_adapter->Reset(error)) {
-        return false;
-    }
-    if (!gba_audio_pipeline_.InitializeForGba(native_core, 44100, 2, error)) {
-        return false;
-    }
-
-    gba_av_ready_ = true;
-    return true;
-#endif
-}
-
-void RuntimeKernel::ClearAvOutputs() {
-    last_output_.video.reset();
-    last_output_.audio.reset();
 }
 
 TransitionIntent RuntimeKernel::ConvertTransition(const core::TransitionEvent& event) {

@@ -1,8 +1,6 @@
 #include "emugbds/boot/BootPolicy.h"
+#include "emugbds/cores/InHouseDsCoreAdapter.h"
 #include "emugbds/cores/InHouseGbaCoreAdapter.h"
-#include "emugbds/cores/MGbaCoreAdapter.h"
-#include "emugbds/cores/MelonDsCoreAdapter.h"
-#include "emugbds/frontend/GbaSdlFrontend.h"
 #include "emugbds/runtime/RuntimeKernel.h"
 
 #include <cstdint>
@@ -16,16 +14,11 @@ namespace {
 struct CliOptions {
     enum class GbaBackend {
         Auto,
-        MGba,
         InHouse,
     };
 
     emugbds::runtime::BootConfig boot{};
     uint64_t frames = 1;
-    bool sdl_frontend = false;
-    int scale = 3;
-    uint64_t sdl_frames = 0;
-    double speed = 1.0;
     GbaBackend gba_backend = GbaBackend::Auto;
 };
 
@@ -33,8 +26,7 @@ void PrintUsage() {
     std::cout
         << "emuGBDS - unified DS/GBA host prototype\n"
         << "Usage:\n"
-        << "  emugbds [--mode auto|ds|gba] [--gba-core auto|mgba|internal] [--nds <rom.nds>] [--gba <rom.gba>] [--slot2 <rom.gba>] [--bios-gba <bios.bin>] [--bios-nds7 <biosnds7.bin>] [--bios-nds9 <biosnds9.bin>] [--firmware-nds <firmware.bin>] [--boot-mode auto|ds-firmware|direct] [--trace-transition] [--frames N] [--sdl] [--scale N] [--sdl-frames N] [--speed X]\n"
-        << "Controls (SDL frontend): X=A, Z=B, A=L, S=R, Enter=Start, Backspace=Select, Arrows=D-pad, Esc=Quit\n";
+        << "  emugbds [--mode auto|ds|gba] [--gba-core auto|internal] [--nds <rom.nds>] [--gba <rom.gba>] [--slot2 <rom.gba>] [--bios-gba <bios.bin>] [--bios-nds7 <biosnds7.bin>] [--bios-nds9 <biosnds9.bin>] [--firmware-nds <firmware.bin>] [--boot-mode auto|ds-firmware|direct] [--trace-transition] [--frames N]\n";
 }
 
 bool ParseMode(const std::string& text, emugbds::core::ModeHint& out_mode) {
@@ -72,10 +64,6 @@ bool ParseDsBootMode(const std::string& text, emugbds::core::DsBootMode& out_mod
 bool ParseGbaBackend(const std::string& text, CliOptions::GbaBackend& out_backend) {
     if (text == "auto") {
         out_backend = CliOptions::GbaBackend::Auto;
-        return true;
-    }
-    if (text == "mgba") {
-        out_backend = CliOptions::GbaBackend::MGba;
         return true;
     }
     if (text == "internal") {
@@ -194,35 +182,6 @@ bool ParseArgs(int argc, char** argv, CliOptions& options, std::string& error) {
             options.frames = std::stoull(argv[++i]);
             continue;
         }
-        if (arg == "--sdl") {
-            options.sdl_frontend = true;
-            continue;
-        }
-        if (arg == "--scale") {
-            if (i + 1 >= argc) {
-                error = "Missing value for --scale";
-                return false;
-            }
-            options.scale = std::stoi(argv[++i]);
-            continue;
-        }
-        if (arg == "--sdl-frames") {
-            if (i + 1 >= argc) {
-                error = "Missing value for --sdl-frames";
-                return false;
-            }
-            options.sdl_frames = std::stoull(argv[++i]);
-            continue;
-        }
-        if (arg == "--speed") {
-            if (i + 1 >= argc) {
-                error = "Missing value for --speed";
-                return false;
-            }
-            options.speed = std::stod(argv[++i]);
-            continue;
-        }
-
         if (!arg.empty() && arg[0] != '-') {
             if (positional_rom_consumed) {
                 error = "Multiple positional ROM paths were provided; use --gba/--nds/--slot2 for additional files";
@@ -268,44 +227,15 @@ int main(int argc, char** argv) {
     std::unique_ptr<emugbds::core::IEmuCore> ds_core;
     std::unique_ptr<emugbds::core::IEmuCore> gba_core;
 
-#if EMUGBDS_HAS_MELONDS
-    ds_core = std::make_unique<emugbds::cores::MelonDsCoreAdapter>();
-#endif
+    ds_core = std::make_unique<emugbds::cores::InHouseDsCoreAdapter>();
 
-    const bool wants_internal_gba = options.gba_backend == CliOptions::GbaBackend::InHouse;
-    const bool wants_mgba_gba = options.gba_backend == CliOptions::GbaBackend::MGba;
-
-#if EMUGBDS_HAS_MGBA
-    if (!wants_internal_gba) {
-        gba_core = std::make_unique<emugbds::cores::MGbaCoreAdapter>();
-    }
-#else
-    if (wants_mgba_gba) {
-        std::cerr << "Requested --gba-core mgba, but mGBA support is not compiled in.\n";
-        return 1;
-    }
-#endif
-
-    if (!gba_core) {
-        gba_core = std::make_unique<emugbds::cores::InHouseGbaCoreAdapter>();
-    }
+    (void)options.gba_backend;
+    gba_core = std::make_unique<emugbds::cores::InHouseGbaCoreAdapter>();
 
     emugbds::runtime::RuntimeKernel kernel(std::move(ds_core), std::move(gba_core));
     if (!kernel.Boot(options.boot, error)) {
         std::cerr << "Boot failed: " << error << '\n';
         return 1;
-    }
-
-    if (options.sdl_frontend) {
-        if (dynamic_cast<emugbds::cores::InHouseGbaCoreAdapter*>(kernel.active_core()) != nullptr) {
-            std::cerr << "SDL frontend currently requires --gba-core mgba; the in-house core is headless in this milestone.\n";
-            return 1;
-        }
-        if (!emugbds::frontend::RunGbaSdlFrontend(kernel, options.scale, options.sdl_frames, options.speed, error)) {
-            std::cerr << "SDL frontend failed: " << error << '\n';
-            return 1;
-        }
-        return 0;
     }
 
     emugbds::runtime::TickResult tick_result{};
