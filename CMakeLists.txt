@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(EMUGBDS_ENABLE_MELONDS "Build with melonDS core adapter support" OFF)
+include(CTest)
 
 set(EMUGBDS_SDL2_TARGET "")
 find_package(SDL2 QUIET CONFIG)
@@ -105,4 +106,42 @@ endif()
 
 if(WIN32)
     target_compile_definitions(emugbds PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(emugbds_tests
+        tests/TestMain.cpp
+        host/src/runtime/RuntimeKernel.cpp
+        host/src/cores/InHouseDsCoreAdapter.cpp
+        host/src/cores/InHouseGbaCoreAdapter.cpp
+        host/src/inds/Core.cpp
+        host/src/ingba/Core.cpp
+        host/src/gba/GbaCartridgeHeader.cpp
+        host/src/nds/NdsCartridgeHeader.cpp
+    )
+    target_include_directories(emugbds_tests PRIVATE host/include)
+    target_compile_definitions(emugbds_tests PRIVATE EMUGBDS_HAS_MELONDS=0 EMUGBDS_HAS_SDL2=0)
+    if(WIN32)
+        target_compile_definitions(emugbds_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
+    endif()
+
+    add_test(NAME core_unit_tests COMMAND emugbds_tests)
+
+    set(EMUGBDS_TEST_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/test-fixtures")
+    add_test(NAME cli_fixture_setup COMMAND emugbds_tests --emit-fixtures "${EMUGBDS_TEST_FIXTURE_DIR}")
+    set_tests_properties(cli_fixture_setup PROPERTIES FIXTURES_SETUP EMUGBDS_CLI_FIXTURES)
+
+    add_test(
+        NAME cli_gba_smoke
+        COMMAND emugbds --mode gba --gba "${EMUGBDS_TEST_FIXTURE_DIR}/test.gba" --frames 3)
+    set_tests_properties(cli_gba_smoke PROPERTIES
+        FIXTURES_REQUIRED EMUGBDS_CLI_FIXTURES
+        PASS_REGULAR_EXPRESSION "Completed 3 frame\\(s\\) in mode GBA\\.")
+
+    add_test(
+        NAME cli_ds_slot2_transition
+        COMMAND emugbds --mode ds --slot2 "${EMUGBDS_TEST_FIXTURE_DIR}/test.gba" --boot-mode ds-firmware --trace-transition --frames 3)
+    set_tests_properties(cli_ds_slot2_transition PROPERTIES
+        FIXTURES_REQUIRED EMUGBDS_CLI_FIXTURES
+        PASS_REGULAR_EXPRESSION "Completed 3 frame\\(s\\) in mode GBA\\.")
 endif()

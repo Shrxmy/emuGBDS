@@ -130,6 +130,14 @@ bool RuntimeKernel::Tick(TickResult& result, std::string& error) {
     last_output_.transition.reset();
     last_output_.video.reset();
     last_output_.audio.reset();
+    if (active_mode() == core::EmuMode::GBA) {
+        if (const auto* inhouse_gba = dynamic_cast<const cores::InHouseGbaCoreAdapter*>(active_core_)) {
+            VideoFrame frame{};
+            if (inhouse_gba->GetVideoFrame(frame)) {
+                last_output_.video = frame;
+            }
+        }
+    }
     result.status = TickStatus::FrameAdvanced;
 
     if (trace_transition_ && active_mode() == core::EmuMode::DS) {
@@ -166,10 +174,14 @@ bool RuntimeKernel::Tick(TickResult& result, std::string& error) {
 }
 
 bool RuntimeKernel::InjectInput(const InputSnapshot& input, std::string& error) {
-    (void)input;
     if (state_ != RuntimeState::Running || !active_core_) {
         error = "Runtime kernel is not in a state that can accept input";
         return false;
+    }
+    if (active_mode() == core::EmuMode::GBA) {
+        if (auto* inhouse_gba = dynamic_cast<cores::InHouseGbaCoreAdapter*>(active_core_)) {
+            inhouse_gba->ApplyInputMasks(input.gba_press_mask, input.gba_release_mask);
+        }
     }
     return true;
 }

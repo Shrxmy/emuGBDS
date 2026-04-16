@@ -9,6 +9,16 @@ struct CpuState {
     std::array<uint32_t, 16> r{};
     uint32_t cpsr = 0x0000001Fu;
     bool thumb = false;
+    std::array<uint32_t, 2> banked_r13_r14_irq{};
+    std::array<uint32_t, 2> banked_r13_r14_svc{};
+    std::array<uint32_t, 2> banked_r13_r14_abt{};
+    std::array<uint32_t, 2> banked_r13_r14_und{};
+    std::array<uint32_t, 7> banked_r8_r14_fiq{};
+    uint32_t spsr_fiq = 0u;
+    uint32_t spsr_irq = 0u;
+    uint32_t spsr_svc = 0u;
+    uint32_t spsr_abt = 0u;
+    uint32_t spsr_und = 0u;
 };
 
 } // namespace emugbds::ingba

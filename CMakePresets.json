@@ -33,7 +33,8 @@
       "configurePreset": "msvc-release",
       "configuration": "Release",
       "targets": [
-        "emugbds"
+        "emugbds",
+        "emugbds_tests"
       ]
     },
     {

@@ -73,4 +73,19 @@ bool InHouseGbaCoreAdapter::SetBiosPath(const std::filesystem::path& bios_path, 
     return true;
 }
 
+void InHouseGbaCoreAdapter::ApplyInputMasks(uint32_t press_mask, uint32_t release_mask) noexcept {
+    core_.ApplyInputMasks(press_mask, release_mask);
+}
+
+bool InHouseGbaCoreAdapter::GetVideoFrame(runtime::VideoFrame& out_frame) const noexcept {
+    if (!initialized_ || !loaded_ || !core_.IsRunning()) {
+        return false;
+    }
+    out_frame.format = runtime::PixelFormat::ABGR8888;
+    out_frame.width = core_.video_width();
+    out_frame.height = core_.video_height();
+    out_frame.pixels = core_.video_pixels();
+    return out_frame.pixels != nullptr;
+}
+
 } // namespace emugbds::cores
