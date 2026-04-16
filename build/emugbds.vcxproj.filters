@@ -7,7 +7,31 @@
     <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\core\ModeCoordinator.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\runtime\RuntimeKernel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\boot\BootPolicy.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\scheduler\FrameScheduler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\av\VideoPipeline.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\av\AudioPipeline.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\ingba\Core.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\gba\GbaCartridgeHeader.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\frontend\GbaSdlFrontend.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\cores\InHouseGbaCoreAdapter.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\cores\MGbaCoreAdapter.cpp">
@@ -16,7 +40,7 @@
     <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\cores\MelonDsCoreAdapter.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\melonds\MelonDsPlatformShim.cpp">
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\nds\NdsPlatformShim.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

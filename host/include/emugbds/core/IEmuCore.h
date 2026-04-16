@@ -13,6 +13,11 @@ public:
     virtual ~IEmuCore() = default;
 
     virtual EmuMode mode() const noexcept = 0;
+    virtual bool Configure(const BootRequest& request, std::string& error) {
+        (void)request;
+        (void)error;
+        return true;
+    }
     virtual bool Initialize(std::string& error) = 0;
     virtual bool LoadPrimaryRom(const std::filesystem::path& rom_path, std::string& error) = 0;
     virtual bool RunFrame(std::string& error) = 0;

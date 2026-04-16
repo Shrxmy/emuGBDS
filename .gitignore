@@ -34,6 +34,8 @@
 # CMake / generated build trees
 /build/
 /build-*/
+/mgba-master/
+/melonDS-master/
 /CMakeFiles/
 /CMakeCache.txt
 /cmake_install.cmake

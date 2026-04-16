@@ -8,6 +8,7 @@
 #include "Platform.h"
 #endif
 
+#include <array>
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -36,6 +37,47 @@ bool ReadWholeFile(const std::filesystem::path& path, std::unique_ptr<uint8_t[]>
     return true;
 }
 
+#if EMUGBDS_HAS_MELONDS
+template <typename ImageArray>
+bool ReadFixedSizeImage(
+    const std::filesystem::path& path,
+    ImageArray& out,
+    const char* label,
+    std::string& error) {
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    if (!input.is_open()) {
+        error = std::string("Failed to open ") + label + ": " + path.string();
+        return false;
+    }
+
+    const std::streamsize length = input.tellg();
+    if (length != static_cast<std::streamsize>(out.size())) {
+        error = std::string("Unexpected size for ") + label + ": " + path.string();
+        return false;
+    }
+
+    input.seekg(0, std::ios::beg);
+    if (!input.read(reinterpret_cast<char*>(out.data()), static_cast<std::streamsize>(out.size()))) {
+        error = std::string("Failed to read ") + label + ": " + path.string();
+        return false;
+    }
+
+    return true;
+}
+
+bool ReadFirmwareImage(const std::filesystem::path& path, melonDS::Firmware& out_firmware, std::string& error) {
+    std::unique_ptr<uint8_t[]> fw_data;
+    uint32_t fw_size = 0;
+    if (!ReadWholeFile(path, fw_data, fw_size)) {
+        error = "Failed to read DS firmware image: " + path.string();
+        return false;
+    }
+
+    out_firmware = melonDS::Firmware(fw_data.get(), fw_size);
+    return true;
+}
+#endif
+
 } // namespace
 
 namespace emugbds::cores {
@@ -48,6 +90,48 @@ core::EmuMode MelonDsCoreAdapter::mode() const noexcept {
     return core::EmuMode::DS;
 }
 
+bool MelonDsCoreAdapter::Configure(const core::BootRequest& request, std::string& error) {
+#if !EMUGBDS_HAS_MELONDS
+    (void)request;
+    error = "melonDS support is not compiled in";
+    return false;
+#else
+    const auto validate_if_present = [&](const std::optional<std::filesystem::path>& path, const char* label) -> bool {
+        if (!path.has_value()) {
+            return true;
+        }
+        if (std::filesystem::exists(*path)) {
+            return true;
+        }
+        error = std::string(label) + " does not exist: " + path->string();
+        return false;
+    };
+
+    if (!validate_if_present(request.nds_bios7_path, "NDS ARM7 BIOS file")) {
+        return false;
+    }
+    if (!validate_if_present(request.nds_bios9_path, "NDS ARM9 BIOS file")) {
+        return false;
+    }
+    if (!validate_if_present(request.nds_firmware_path, "NDS firmware file")) {
+        return false;
+    }
+
+    nds_bios7_path_ = request.nds_bios7_path;
+    nds_bios9_path_ = request.nds_bios9_path;
+    nds_firmware_path_ = request.nds_firmware_path;
+    ds_boot_mode_ = request.ds_boot_mode;
+
+    if (ds_boot_mode_ == core::DsBootMode::DsFirmware &&
+        (!nds_bios7_path_.has_value() || !nds_bios9_path_.has_value() || !nds_firmware_path_.has_value())) {
+        error = "DS firmware boot requires --bios-nds7, --bios-nds9, and --firmware-nds";
+        return false;
+    }
+
+    return true;
+#endif
+}
+
 bool MelonDsCoreAdapter::Initialize(std::string& error) {
 #if !EMUGBDS_HAS_MELONDS
     error = "melonDS support is not compiled in";
@@ -58,6 +142,27 @@ bool MelonDsCoreAdapter::Initialize(std::string& error) {
     }
 
     melonDS::NDSArgs args;
+
+    if (nds_bios9_path_.has_value()) {
+        auto bios9 = std::make_unique<melonDS::ARM9BIOSImage>();
+        if (!ReadFixedSizeImage(*nds_bios9_path_, *bios9, "NDS ARM9 BIOS", error)) {
+            return false;
+        }
+        args.ARM9BIOS = std::move(bios9);
+    }
+
+    if (nds_bios7_path_.has_value()) {
+        auto bios7 = std::make_unique<melonDS::ARM7BIOSImage>();
+        if (!ReadFixedSizeImage(*nds_bios7_path_, *bios7, "NDS ARM7 BIOS", error)) {
+            return false;
+        }
+        args.ARM7BIOS = std::move(bios7);
+    }
+
+    if (nds_firmware_path_.has_value() && !ReadFirmwareImage(*nds_firmware_path_, args.Firmware, error)) {
+        return false;
+    }
+
     nds_ = std::make_unique<melonDS::NDS>(std::move(args), this);
     nds_->Reset();
     return true;
@@ -94,7 +199,13 @@ bool MelonDsCoreAdapter::LoadPrimaryRom(const std::filesystem::path& rom_path, s
     }
 
     nds_->Reset();
-    if (nds_->NeedsDirectBoot()) {
+    std::string boot_error;
+    const bool direct_boot = ShouldDirectBoot(boot_error);
+    if (!boot_error.empty()) {
+        error = std::move(boot_error);
+        return false;
+    }
+    if (direct_boot) {
         nds_->SetupDirectBoot(rom_path.filename().string());
     }
     nds_->Start();
@@ -140,7 +251,13 @@ bool MelonDsCoreAdapter::Reset(std::string& error) {
     }
 
     nds_->Reset();
-    if (primary_loaded_ && primary_rom_path_.has_value() && nds_->NeedsDirectBoot()) {
+    std::string boot_error;
+    const bool direct_boot = ShouldDirectBoot(boot_error);
+    if (!boot_error.empty()) {
+        error = std::move(boot_error);
+        return false;
+    }
+    if (primary_loaded_ && primary_rom_path_.has_value() && direct_boot) {
         nds_->SetupDirectBoot(primary_rom_path_->filename().string());
     }
     nds_->Start();
@@ -244,6 +361,33 @@ bool MelonDsCoreAdapter::InsertSlot2Rom(std::string& error) {
 
     nds_->SetGBACart(std::move(cart));
     return true;
+#endif
+}
+
+bool MelonDsCoreAdapter::ShouldDirectBoot(std::string& error) const {
+#if !EMUGBDS_HAS_MELONDS
+    error = "melonDS support is not compiled in";
+    return false;
+#else
+    if (!nds_) {
+        error = "melonDS core is not initialized";
+        return false;
+    }
+
+    switch (ds_boot_mode_) {
+    case core::DsBootMode::Direct:
+        return true;
+    case core::DsBootMode::DsFirmware:
+        if (nds_->NeedsDirectBoot()) {
+            error = "DS firmware boot requested, but loaded BIOS/Firmware are not bootable; falling back to direct boot is disallowed";
+            return false;
+        }
+        return false;
+    case core::DsBootMode::Auto:
+        return nds_->NeedsDirectBoot();
+    }
+
+    return nds_->NeedsDirectBoot();
 #endif
 }
 

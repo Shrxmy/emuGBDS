@@ -1,7 +1,7 @@
 #pragma once
 
 #include "emugbds/core/IEmuCore.h"
-#include "emugbds/melonds/PlatformEvents.h"
+#include "emugbds/nds/PlatformEvents.h"
 
 #include <memory>
 #include <optional>
@@ -16,12 +16,13 @@ enum StopReason;
 
 namespace emugbds::cores {
 
-class MelonDsCoreAdapter final : public core::IEmuCore, public melonds::IPlatformEvents {
+class MelonDsCoreAdapter final : public core::IEmuCore, public nds::IPlatformEvents {
 public:
     MelonDsCoreAdapter() = default;
     ~MelonDsCoreAdapter() override;
 
     core::EmuMode mode() const noexcept override;
+    bool Configure(const core::BootRequest& request, std::string& error) override;
     bool Initialize(std::string& error) override;
     bool LoadPrimaryRom(const std::filesystem::path& rom_path, std::string& error) override;
     bool RunFrame(std::string& error) override;
@@ -39,6 +40,7 @@ public:
 
 private:
     bool InsertSlot2Rom(std::string& error);
+    bool ShouldDirectBoot(std::string& error) const;
 
 #if EMUGBDS_HAS_MELONDS
     std::unique_ptr<melonDS::NDS> nds_;
@@ -48,6 +50,10 @@ private:
     bool primary_loaded_ = false;
     std::optional<std::filesystem::path> primary_rom_path_;
     std::optional<std::filesystem::path> slot2_rom_path_;
+    std::optional<std::filesystem::path> nds_bios7_path_;
+    std::optional<std::filesystem::path> nds_bios9_path_;
+    std::optional<std::filesystem::path> nds_firmware_path_;
+    core::DsBootMode ds_boot_mode_ = core::DsBootMode::Auto;
     std::optional<core::TransitionEvent> pending_transition_;
     std::vector<uint8_t> nds_save_image_;
     std::vector<uint8_t> gba_save_image_;

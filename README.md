@@ -1,9 +1,11 @@
 # emuGBDS
 
-Prototype host project that unifies:
+Prototype host project with:
 
-- `melonDS` as the Nintendo DS runtime core
-- `mGBA` as the Game Boy Advance runtime core
+- an in-house clean-room GBA core (`ingba`)
+- optional third-party integrations:
+- `melonDS` for Nintendo DS
+- `mGBA` for Game Boy Advance
 
 ## Original-First Policy
 
@@ -23,10 +25,13 @@ This repository currently implements a first executable (`emugbds`) with:
 
 - One host API (`IEmuCore`, `ModeCoordinator`, `BootRequest`, `TransitionEvent`)
 - Runtime kernel architecture (`RuntimeKernel`, `BootConfig`, `TickResult`, `OutputBundle`)
+- Unified host input contract (`InputSnapshot`) with runtime-owned key injection
 - Boot policy subsystem (`BootPolicy`) for default BIOS/firmware path resolution
 - Reusable frame pacing subsystem (`FrameScheduler`)
+- Runtime-owned AV pipelines (`VideoPipeline`, `AudioPipeline`) consumed by SDL frontend
 - DS adapter (`MelonDsCoreAdapter`)
 - GBA adapter (`MGbaCoreAdapter`)
+- In-house clean-room GBA adapter scaffold (`InHouseGbaCoreAdapter`, `ingba::Core`)
 - melonDS platform callback shim required for embedding `core` outside the original frontend
 - DS -> GBA transition hook when melonDS signals `GBAModeNotSupported`
 
@@ -44,25 +49,18 @@ cmake --preset msvc-release
 cmake --build --preset build-msvc-release
 ```
 
-For NDS + GBA integration on Windows, prefer the clang preset:
+For optional third-party NDS + GBA integration on Windows, use:
 
 ```powershell
-cmake --preset nds-clang-release
-cmake --build --preset build-nds-clang-release
+cmake --preset thirdparty-clang-release
+cmake --build --preset build-thirdparty-clang-release
 ```
 
 Requires Visual Studio ClangCL tools (or LLVM/clang in your PATH).
 
-### Windows/MSVC default
+### Defaults
 
-On MSVC, `EMUGBDS_ENABLE_MELONDS` currently defaults to `OFF` in this repository because upstream melonDS core sources hit compiler-compat issues in this toolchain.  
-You can still build and run the unified host with mGBA integration immediately.
-
-To try enabling melonDS integration explicitly:
-
-```powershell
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DEMUGBDS_ENABLE_MELONDS=ON
-```
+By default, third-party cores are disabled (`EMUGBDS_ENABLE_MELONDS=OFF`, `EMUGBDS_ENABLE_MGBA=OFF`) so the project builds from in-house code only.
 
 ## Run
 
@@ -74,6 +72,19 @@ or:
 
 ```powershell
 .\build\Release\emugbds.exe --mode gba --gba path\to\game.gba --frames 300
+```
+
+In-house clean-room GBA core smoke path:
+
+```powershell
+.\build\Release\emugbds.exe --mode gba --gba .\roms\Fire_Emblem.gba --gba-core internal --frames 300
+```
+
+To select backend explicitly:
+
+```powershell
+.\build\Release\emugbds.exe --mode gba --gba .\roms\Fire_Emblem.gba --gba-core internal --frames 300
+.\build\Release\emugbds.exe --mode gba --gba .\roms\Fire_Emblem.gba --gba-core mgba --sdl
 ```
 
 ### DS firmware boot mode and BIOS-authentic GBA switch
@@ -103,6 +114,8 @@ Or explicit paths:
 ```powershell
 .\build\Release\emugbds.exe --mode gba --gba .\roms\Fire_Emblem.gba --sdl --scale 3
 ```
+
+Note: SDL frontend currently requires `--gba-core mgba`. The in-house core is headless in this milestone.
 
 For deterministic SDL smoke tests (auto-exit after N frames):
 

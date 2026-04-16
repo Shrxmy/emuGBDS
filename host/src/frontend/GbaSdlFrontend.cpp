@@ -1,49 +1,69 @@
 #include "emugbds/frontend/GbaSdlFrontend.h"
+#include "emugbds/input/GbaKeys.h"
+#include "emugbds/scheduler/FrameScheduler.h"
 
 #if EMUGBDS_HAS_SDL2 && EMUGBDS_HAS_MGBA
-#include <mgba/core/core.h>
-#include <mgba/internal/gba/input.h>
-#include <mgba-util/audio-buffer.h>
-#include <mgba-util/image.h>
-
 #include <SDL.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
-#include <vector>
+#include <iostream>
 
 namespace {
 
 uint32_t KeyMaskFor(SDL_Keycode key) {
     switch (key) {
     case SDLK_x:
-        return 1u << GBA_KEY_A;
+        return emugbds::input::GbaKeyMask(emugbds::input::GbaKey::A);
     case SDLK_z:
-        return 1u << GBA_KEY_B;
+        return emugbds::input::GbaKeyMask(emugbds::input::GbaKey::B);
     case SDLK_a:
-        return 1u << GBA_KEY_L;
+        return emugbds::input::GbaKeyMask(emugbds::input::GbaKey::L);
     case SDLK_s:
-        return 1u << GBA_KEY_R;
+        return emugbds::input::GbaKeyMask(emugbds::input::GbaKey::R);
     case SDLK_RETURN:
-        return 1u << GBA_KEY_START;
+        return emugbds::input::GbaKeyMask(emugbds::input::GbaKey::Start);
     case SDLK_BACKSPACE:
-        return 1u << GBA_KEY_SELECT;
+        return emugbds::input::GbaKeyMask(emugbds::input::GbaKey::Select);
     case SDLK_UP:
-        return 1u << GBA_KEY_UP;
+        return emugbds::input::GbaKeyMask(emugbds::input::GbaKey::Up);
     case SDLK_DOWN:
-        return 1u << GBA_KEY_DOWN;
+        return emugbds::input::GbaKeyMask(emugbds::input::GbaKey::Down);
     case SDLK_LEFT:
-        return 1u << GBA_KEY_LEFT;
+        return emugbds::input::GbaKeyMask(emugbds::input::GbaKey::Left);
     case SDLK_RIGHT:
-        return 1u << GBA_KEY_RIGHT;
+        return emugbds::input::GbaKeyMask(emugbds::input::GbaKey::Right);
     default:
         return 0;
     }
 }
 
-Uint32 NativePixelFormat() {
-    return SDL_PIXELFORMAT_ABGR8888;
+bool RenderFrame(
+    SDL_Renderer* renderer,
+    SDL_Texture* texture,
+    const emugbds::runtime::VideoFrame& frame,
+    std::string& error) {
+    if (!frame.pixels || frame.width == 0 || frame.height == 0) {
+        error = "Runtime video frame is missing pixel data";
+        return false;
+    }
+
+    if (SDL_UpdateTexture(
+            texture,
+            nullptr,
+            frame.pixels,
+            static_cast<int>(frame.width * sizeof(uint32_t))) != 0) {
+        error = std::string("SDL texture update failed: ") + SDL_GetError();
+        return false;
+    }
+
+    SDL_RenderClear(renderer);
+    if (SDL_RenderCopy(renderer, texture, nullptr, nullptr) != 0) {
+        error = std::string("SDL render copy failed: ") + SDL_GetError();
+        return false;
+    }
+    SDL_RenderPresent(renderer);
+    return true;
 }
 
 } // namespace
@@ -51,26 +71,17 @@ Uint32 NativePixelFormat() {
 
 namespace emugbds::frontend {
 
-bool RunGbaSdlFrontend(cores::MGbaCoreAdapter& adapter, int scale, uint64_t max_frames, double speed_multiplier, std::string& error) {
+bool RunGbaSdlFrontend(runtime::RuntimeKernel& kernel, int scale, uint64_t max_frames, double speed_multiplier, std::string& error) {
 #if !(EMUGBDS_HAS_SDL2 && EMUGBDS_HAS_MGBA)
-    (void)adapter;
+    (void)kernel;
     (void)scale;
     (void)max_frames;
     (void)speed_multiplier;
     error = "SDL frontend is not available in this build";
     return false;
 #else
-    mCore* core = adapter.NativeCore();
-    if (!core) {
-        error = "mGBA core is not initialized";
-        return false;
-    }
-
-    unsigned width = 0;
-    unsigned height = 0;
-    core->baseVideoSize(core, &width, &height);
-    if (width == 0 || height == 0) {
-        error = "Invalid video dimensions from mGBA core";
+    if (kernel.active_mode() != core::EmuMode::GBA) {
+        error = "SDL frontend requires active GBA mode";
         return false;
     }
 
@@ -84,17 +95,32 @@ bool RunGbaSdlFrontend(cores::MGbaCoreAdapter& adapter, int scale, uint64_t max_
     }
 #endif
 
+    runtime::TickResult tick_result{};
+    if (!kernel.Tick(tick_result, error)) {
+        return false;
+    }
+    if (!tick_result.output.video.has_value()) {
+        error = "Runtime did not produce a video frame in GBA mode";
+        return false;
+    }
+
+    const runtime::VideoFrame first_frame = *tick_result.output.video;
+    if (!first_frame.pixels || first_frame.width == 0 || first_frame.height == 0) {
+        error = "Runtime produced an invalid first video frame";
+        return false;
+    }
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS) != 0) {
         error = std::string("SDL init failed: ") + SDL_GetError();
         return false;
     }
 
     SDL_Window* window = SDL_CreateWindow(
-        "emuGBDS (mGBA SDL Test)",
+        "emuGBDS (Runtime SDL)",
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
-        static_cast<int>(width) * scale,
-        static_cast<int>(height) * scale,
+        static_cast<int>(first_frame.width) * scale,
+        static_cast<int>(first_frame.height) * scale,
         SDL_WINDOW_SHOWN);
     if (!window) {
         error = std::string("SDL window creation failed: ") + SDL_GetError();
@@ -115,10 +141,10 @@ bool RunGbaSdlFrontend(cores::MGbaCoreAdapter& adapter, int scale, uint64_t max_
 
     SDL_Texture* texture = SDL_CreateTexture(
         renderer,
-        NativePixelFormat(),
+        SDL_PIXELFORMAT_ABGR8888,
         SDL_TEXTUREACCESS_STREAMING,
-        static_cast<int>(width),
-        static_cast<int>(height));
+        static_cast<int>(first_frame.width),
+        static_cast<int>(first_frame.height));
     if (!texture) {
         error = std::string("SDL texture creation failed: ") + SDL_GetError();
         SDL_DestroyRenderer(renderer);
@@ -128,26 +154,11 @@ bool RunGbaSdlFrontend(cores::MGbaCoreAdapter& adapter, int scale, uint64_t max_
     }
     SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
 
-    std::vector<mColor> frame_buffer(width * height);
-    std::vector<uint32_t> upload_buffer(width * height);
-    core->setVideoBuffer(core, frame_buffer.data(), width);
-    if (!adapter.Reset(error)) {
-        SDL_DestroyTexture(texture);
-        SDL_DestroyRenderer(renderer);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return false;
-    }
-
-    bool saw_nonzero_frame = false;
-    uint64_t frame_counter = 0;
-
     SDL_AudioSpec want{};
     SDL_AudioSpec got{};
-    const int sample_rate = static_cast<int>(core->audioSampleRate(core));
-    want.freq = sample_rate > 0 ? sample_rate : 44100;
+    want.freq = tick_result.output.audio.has_value() ? static_cast<int>(tick_result.output.audio->sample_rate) : 44100;
     want.format = AUDIO_S16SYS;
-    want.channels = 2;
+    want.channels = static_cast<Uint8>(tick_result.output.audio.has_value() ? tick_result.output.audio->channels : 2);
     want.samples = 1024;
     want.callback = nullptr;
 
@@ -160,31 +171,34 @@ bool RunGbaSdlFrontend(cores::MGbaCoreAdapter& adapter, int scale, uint64_t max_
         SDL_Quit();
         return false;
     }
-    core->setAudioBufferSize(core, got.samples * 2);
     SDL_PauseAudioDevice(audio_device, 0);
+    const Uint32 max_queued_audio_bytes = static_cast<Uint32>((got.freq * got.channels * sizeof(int16_t)) / 5);
 
-    std::vector<int16_t> audio_samples;
-    const uint64_t perf_frequency = SDL_GetPerformanceFrequency();
-    uint64_t frame_deadline = SDL_GetPerformanceCounter();
-    const uint32_t frame_cycles = core->frameCycles(core);
-    const uint32_t cpu_frequency = core->frequency(core);
-    double target_fps = 59.7275005696;
-    if (frame_cycles > 0 && cpu_frequency > 0) {
-        const double derived_fps = static_cast<double>(cpu_frequency) / static_cast<double>(frame_cycles);
-        if (derived_fps >= 50.0 && derived_fps <= 70.0) {
-            target_fps = derived_fps;
-        }
-    }
+    const double target_fps = 59.7275005696;
     if (speed_multiplier <= 0.0) {
         speed_multiplier = 1.0;
     }
-    target_fps *= speed_multiplier;
+    scheduler::FrameScheduler scheduler;
+    if (!scheduler.Configure(target_fps, speed_multiplier, error)) {
+        SDL_CloseAudioDevice(audio_device);
+        SDL_DestroyTexture(texture);
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return false;
+    }
+    scheduler.Start();
 
-    const double safe_target_fps = target_fps > 1.0 ? target_fps : 1.0;
-    const double ticks_per_frame = static_cast<double>(perf_frequency) / safe_target_fps;
-    const Uint32 max_queued_audio_bytes = static_cast<Uint32>((got.freq * got.channels * sizeof(int16_t)) / 5); // ~200ms
-    const int got_freq_chunk = got.freq / 20;
-    const size_t max_audio_frames_per_tick = static_cast<size_t>(got_freq_chunk > 1 ? got_freq_chunk : 1); // ~50ms
+    bool saw_nonzero_frame = false;
+    uint64_t frame_counter = 1;
+    if (!RenderFrame(renderer, texture, first_frame, error)) {
+        SDL_CloseAudioDevice(audio_device);
+        SDL_DestroyTexture(texture);
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return false;
+    }
 
     bool running = true;
     while (running) {
@@ -202,14 +216,23 @@ bool RunGbaSdlFrontend(cores::MGbaCoreAdapter& adapter, int scale, uint64_t max_
                 if (!event.key.repeat) {
                     const uint32_t key = KeyMaskFor(event.key.keysym.sym);
                     if (key != 0) {
-                        core->addKeys(core, key);
+                        runtime::InputSnapshot input{};
+                        input.gba_press_mask = key;
+                        if (!kernel.InjectInput(input, error)) {
+                            running = false;
+                            break;
+                        }
                     }
                 }
                 break;
             case SDL_KEYUP: {
                 const uint32_t key = KeyMaskFor(event.key.keysym.sym);
                 if (key != 0) {
-                    core->clearKeys(core, key);
+                    runtime::InputSnapshot input{};
+                    input.gba_release_mask = key;
+                    if (!kernel.InjectInput(input, error)) {
+                        running = false;
+                    }
                 }
                 break;
             }
@@ -222,90 +245,61 @@ bool RunGbaSdlFrontend(cores::MGbaCoreAdapter& adapter, int scale, uint64_t max_
             break;
         }
         if (max_frames > 0 && frame_counter >= max_frames) {
-            running = false;
             break;
         }
 
-        if (!adapter.RunFrame(error)) {
+        if (!kernel.Tick(tick_result, error)) {
             running = false;
             break;
         }
         ++frame_counter;
 
-        if (!saw_nonzero_frame && frame_counter <= 600) {
-            for (const mColor pixel : frame_buffer) {
-                if (pixel != 0) {
-                    saw_nonzero_frame = true;
+        if (tick_result.output.active_mode != core::EmuMode::GBA) {
+            error = "Runtime switched away from GBA mode while SDL GBA frontend is active";
+            running = false;
+            break;
+        }
+
+        if (tick_result.output.video.has_value()) {
+            const runtime::VideoFrame& frame = *tick_result.output.video;
+            if (!saw_nonzero_frame && frame_counter <= 600 && frame.pixels) {
+                const uint64_t total_pixels = static_cast<uint64_t>(frame.width) * frame.height;
+                for (uint64_t i = 0; i < total_pixels; ++i) {
+                    if ((frame.pixels[i] & 0x00FFFFFFu) != 0) {
+                        saw_nonzero_frame = true;
+                        break;
+                    }
+                }
+                if (!saw_nonzero_frame && (frame_counter % 120u) == 0u) {
+                    std::cout << "[video] frame " << frame_counter << " is still fully black\n";
+                }
+                if (!saw_nonzero_frame && frame_counter == 600) {
+                    error = "Video frames stayed fully black for 600 frames";
+                    running = false;
                     break;
                 }
             }
-            if (!saw_nonzero_frame && frame_counter == 600) {
-                error = "Video buffer stayed fully black for 600 frames after reset";
+
+            if (!RenderFrame(renderer, texture, frame, error)) {
                 running = false;
                 break;
             }
         }
 
-        for (size_t i = 0; i < frame_buffer.size(); ++i) {
-            const uint32_t converted = mColorConvert(static_cast<uint32_t>(frame_buffer[i]), mCOLOR_NATIVE, mCOLOR_ABGR8);
-            upload_buffer[i] = converted | 0xFF000000u;
-        }
-        if (SDL_UpdateTexture(
-                texture,
-                nullptr,
-                upload_buffer.data(),
-                static_cast<int>(width * sizeof(uint32_t))) != 0) {
-            error = std::string("SDL texture update failed: ") + SDL_GetError();
-            running = false;
-            break;
-        }
-
-        SDL_RenderClear(renderer);
-        if (SDL_RenderCopy(renderer, texture, nullptr, nullptr) != 0) {
-            error = std::string("SDL render copy failed: ") + SDL_GetError();
-            running = false;
-            break;
-        }
-        SDL_RenderPresent(renderer);
-
-        mAudioBuffer* audio_buffer = core->getAudioBuffer(core);
-        if (audio_buffer) {
-            if (SDL_GetQueuedAudioSize(audio_device) > max_queued_audio_bytes) {
-                SDL_ClearQueuedAudio(audio_device);
-            }
-            const size_t available_frames = mAudioBufferAvailable(audio_buffer);
-            if (available_frames > 0) {
-                const size_t frames_to_read = available_frames < max_audio_frames_per_tick
-                    ? available_frames
-                    : max_audio_frames_per_tick;
-                audio_samples.resize(frames_to_read * 2);
-                const size_t read_frames = mAudioBufferRead(audio_buffer, audio_samples.data(), frames_to_read);
-                if (read_frames > 0) {
-                    SDL_QueueAudio(
-                        audio_device,
-                        audio_samples.data(),
-                        static_cast<Uint32>(read_frames * 2 * sizeof(int16_t)));
+        if (tick_result.output.audio.has_value()) {
+            const runtime::AudioChunk& audio = *tick_result.output.audio;
+            if (audio.samples && audio.sample_count > 0) {
+                if (SDL_GetQueuedAudioSize(audio_device) > max_queued_audio_bytes) {
+                    SDL_ClearQueuedAudio(audio_device);
                 }
+                SDL_QueueAudio(
+                    audio_device,
+                    audio.samples,
+                    static_cast<Uint32>(audio.sample_count * sizeof(int16_t)));
             }
         }
 
-        frame_deadline += static_cast<uint64_t>(ticks_per_frame);
-        const uint64_t now = SDL_GetPerformanceCounter();
-        if (frame_deadline > now) {
-            const uint64_t ticks_left = frame_deadline - now;
-            const uint64_t ms_left = (ticks_left * 1000ULL) / perf_frequency;
-            if (ms_left > 2) {
-                SDL_Delay(static_cast<Uint32>(ms_left - 1));
-            }
-            while (SDL_GetPerformanceCounter() < frame_deadline) {
-                // Busy-wait for sub-ms accuracy; avoids scheduler oversleep.
-            }
-        } else {
-            const uint64_t max_lag_ticks = static_cast<uint64_t>(ticks_per_frame * 4.0);
-            if (now - frame_deadline > max_lag_ticks) {
-                frame_deadline = now;
-            }
-        }
+        scheduler.WaitForNextFrame();
     }
 
     SDL_CloseAudioDevice(audio_device);

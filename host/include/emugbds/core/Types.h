@@ -17,11 +17,22 @@ enum class ModeHint {
     GBA,
 };
 
+enum class DsBootMode {
+    Auto,
+    DsFirmware,
+    Direct,
+};
+
 struct BootRequest {
     ModeHint mode_hint = ModeHint::Auto;
     std::optional<std::filesystem::path> nds_rom_path;
     std::optional<std::filesystem::path> gba_rom_path;
     std::optional<std::filesystem::path> slot2_rom_path;
+    std::optional<std::filesystem::path> nds_bios7_path;
+    std::optional<std::filesystem::path> nds_bios9_path;
+    std::optional<std::filesystem::path> nds_firmware_path;
+    DsBootMode ds_boot_mode = DsBootMode::Auto;
+    bool trace_transition = false;
 };
 
 struct TransitionEvent {

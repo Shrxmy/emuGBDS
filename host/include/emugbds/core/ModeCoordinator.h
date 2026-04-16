@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <cstdint>
 
 namespace emugbds::core {
 
@@ -28,6 +29,8 @@ private:
     IEmuCore* active_core_ = nullptr;
     std::optional<std::filesystem::path> slot2_rom_path_;
     std::optional<TransitionEvent> last_transition_;
+    bool trace_transition_ = false;
+    uint64_t frame_index_ = 0;
 };
 
 } // namespace emugbds::core

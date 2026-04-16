@@ -86,7 +86,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;D:\Programming\Personal\emuGBDS\mgba-master\include;D:\Programming\Personal\emuGBDS\build\mgba-master\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>%(AdditionalOptions) /external:I "D:/Programming/Personal/emuGBDS/sdl/include"</AdditionalOptions>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
@@ -107,16 +107,16 @@
       <SupportJustMyCode></SupportJustMyCode>
       <TreatWChar_tAsBuiltInType></TreatWChar_tAsBuiltInType>
       <UseFullPaths>false</UseFullPaths>
-      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;EMUGBDS_HAS_MELONDS=0;EMUGBDS_HAS_MGBA=1;ENABLE_VFS;ENABLE_VFS_FD;ENABLE_DIRECTORIES;EMUGBDS_HAS_SDL2=1;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="Debug"</PreprocessorDefinitions>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;EMUGBDS_HAS_MELONDS=0;EMUGBDS_HAS_MGBA=0;EMUGBDS_HAS_SDL2=1;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="Debug"</PreprocessorDefinitions>
       <ObjectFileName>$(IntDir)</ObjectFileName>
       <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
     </ClCompile>
     <ResourceCompile>
-      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_DEBUG;_WINDOWS;EMUGBDS_HAS_MELONDS=0;EMUGBDS_HAS_MGBA=1;ENABLE_VFS;ENABLE_VFS_FD;ENABLE_DIRECTORIES;EMUGBDS_HAS_SDL2=1;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"Debug\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;D:\Programming\Personal\emuGBDS\mgba-master\include;D:\Programming\Personal\emuGBDS\build\mgba-master\include;D:\Programming\Personal\emuGBDS\sdl\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_DEBUG;_WINDOWS;EMUGBDS_HAS_MELONDS=0;EMUGBDS_HAS_MGBA=0;EMUGBDS_HAS_SDL2=1;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"Debug\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;D:\Programming\Personal\emuGBDS\sdl\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;D:\Programming\Personal\emuGBDS\mgba-master\include;D:\Programming\Personal\emuGBDS\build\mgba-master\include;D:\Programming\Personal\emuGBDS\sdl\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;D:\Programming\Personal\emuGBDS\sdl\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -136,7 +136,7 @@ exit /b %1
 if %errorlevel% neq 0 goto :VCEnd</Command>
     </PostBuildEvent>
     <Link>
-      <AdditionalDependencies>mgba-master\Debug\mgba.lib;ws2_32.lib;shlwapi.lib;D:\Programming\Personal\emuGBDS\sdl\lib\x64\SDL2.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalDependencies>D:\Programming\Personal\emuGBDS\sdl\lib\x64\SDL2.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
       <DataExecutionPrevention></DataExecutionPrevention>
@@ -155,7 +155,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;D:\Programming\Personal\emuGBDS\mgba-master\include;D:\Programming\Personal\emuGBDS\build\mgba-master\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>%(AdditionalOptions) /external:I "D:/Programming/Personal/emuGBDS/sdl/include"</AdditionalOptions>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
@@ -175,18 +175,18 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <SupportJustMyCode></SupportJustMyCode>
       <TreatWChar_tAsBuiltInType></TreatWChar_tAsBuiltInType>
       <UseFullPaths>false</UseFullPaths>
-      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;EMUGBDS_HAS_MELONDS=0;EMUGBDS_HAS_MGBA=1;ENABLE_VFS;ENABLE_VFS_FD;ENABLE_DIRECTORIES;EMUGBDS_HAS_SDL2=1;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="Release"</PreprocessorDefinitions>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;EMUGBDS_HAS_MELONDS=0;EMUGBDS_HAS_MGBA=0;EMUGBDS_HAS_SDL2=1;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="Release"</PreprocessorDefinitions>
       <ObjectFileName>$(IntDir)</ObjectFileName>
       <DebugInformationFormat>
       </DebugInformationFormat>
       <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
     </ClCompile>
     <ResourceCompile>
-      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;EMUGBDS_HAS_MELONDS=0;EMUGBDS_HAS_MGBA=1;ENABLE_VFS;ENABLE_VFS_FD;ENABLE_DIRECTORIES;EMUGBDS_HAS_SDL2=1;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"Release\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;D:\Programming\Personal\emuGBDS\mgba-master\include;D:\Programming\Personal\emuGBDS\build\mgba-master\include;D:\Programming\Personal\emuGBDS\sdl\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;EMUGBDS_HAS_MELONDS=0;EMUGBDS_HAS_MGBA=0;EMUGBDS_HAS_SDL2=1;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"Release\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;D:\Programming\Personal\emuGBDS\sdl\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;D:\Programming\Personal\emuGBDS\mgba-master\include;D:\Programming\Personal\emuGBDS\build\mgba-master\include;D:\Programming\Personal\emuGBDS\sdl\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;D:\Programming\Personal\emuGBDS\sdl\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -206,7 +206,7 @@ exit /b %1
 if %errorlevel% neq 0 goto :VCEnd</Command>
     </PostBuildEvent>
     <Link>
-      <AdditionalDependencies>mgba-master\Release\mgba.lib;ws2_32.lib;shlwapi.lib;D:\Programming\Personal\emuGBDS\sdl\lib\x64\SDL2.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalDependencies>D:\Programming\Personal\emuGBDS\sdl\lib\x64\SDL2.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
       <DataExecutionPrevention></DataExecutionPrevention>
@@ -225,7 +225,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;D:\Programming\Personal\emuGBDS\mgba-master\include;D:\Programming\Personal\emuGBDS\build\mgba-master\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>%(AdditionalOptions) /external:I "D:/Programming/Personal/emuGBDS/sdl/include"</AdditionalOptions>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
@@ -245,18 +245,18 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <SupportJustMyCode></SupportJustMyCode>
       <TreatWChar_tAsBuiltInType></TreatWChar_tAsBuiltInType>
       <UseFullPaths>false</UseFullPaths>
-      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;EMUGBDS_HAS_MELONDS=0;EMUGBDS_HAS_MGBA=1;ENABLE_VFS;ENABLE_VFS_FD;ENABLE_DIRECTORIES;EMUGBDS_HAS_SDL2=1;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="MinSizeRel"</PreprocessorDefinitions>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;EMUGBDS_HAS_MELONDS=0;EMUGBDS_HAS_MGBA=0;EMUGBDS_HAS_SDL2=1;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="MinSizeRel"</PreprocessorDefinitions>
       <ObjectFileName>$(IntDir)</ObjectFileName>
       <DebugInformationFormat>
       </DebugInformationFormat>
       <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
     </ClCompile>
     <ResourceCompile>
-      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;EMUGBDS_HAS_MELONDS=0;EMUGBDS_HAS_MGBA=1;ENABLE_VFS;ENABLE_VFS_FD;ENABLE_DIRECTORIES;EMUGBDS_HAS_SDL2=1;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"MinSizeRel\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;D:\Programming\Personal\emuGBDS\mgba-master\include;D:\Programming\Personal\emuGBDS\build\mgba-master\include;D:\Programming\Personal\emuGBDS\sdl\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;EMUGBDS_HAS_MELONDS=0;EMUGBDS_HAS_MGBA=0;EMUGBDS_HAS_SDL2=1;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"MinSizeRel\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;D:\Programming\Personal\emuGBDS\sdl\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;D:\Programming\Personal\emuGBDS\mgba-master\include;D:\Programming\Personal\emuGBDS\build\mgba-master\include;D:\Programming\Personal\emuGBDS\sdl\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;D:\Programming\Personal\emuGBDS\sdl\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -276,7 +276,7 @@ exit /b %1
 if %errorlevel% neq 0 goto :VCEnd</Command>
     </PostBuildEvent>
     <Link>
-      <AdditionalDependencies>mgba-master\MinSizeRel\mgba.lib;ws2_32.lib;shlwapi.lib;D:\Programming\Personal\emuGBDS\sdl\lib\x64\SDL2.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalDependencies>D:\Programming\Personal\emuGBDS\sdl\lib\x64\SDL2.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
       <DataExecutionPrevention></DataExecutionPrevention>
@@ -295,7 +295,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;D:\Programming\Personal\emuGBDS\mgba-master\include;D:\Programming\Personal\emuGBDS\build\mgba-master\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>%(AdditionalOptions) /external:I "D:/Programming/Personal/emuGBDS/sdl/include"</AdditionalOptions>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
@@ -316,16 +316,16 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <SupportJustMyCode></SupportJustMyCode>
       <TreatWChar_tAsBuiltInType></TreatWChar_tAsBuiltInType>
       <UseFullPaths>false</UseFullPaths>
-      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;EMUGBDS_HAS_MELONDS=0;EMUGBDS_HAS_MGBA=1;ENABLE_VFS;ENABLE_VFS_FD;ENABLE_DIRECTORIES;EMUGBDS_HAS_SDL2=1;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="RelWithDebInfo"</PreprocessorDefinitions>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;EMUGBDS_HAS_MELONDS=0;EMUGBDS_HAS_MGBA=0;EMUGBDS_HAS_SDL2=1;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="RelWithDebInfo"</PreprocessorDefinitions>
       <ObjectFileName>$(IntDir)</ObjectFileName>
       <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
     </ClCompile>
     <ResourceCompile>
-      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;EMUGBDS_HAS_MELONDS=0;EMUGBDS_HAS_MGBA=1;ENABLE_VFS;ENABLE_VFS_FD;ENABLE_DIRECTORIES;EMUGBDS_HAS_SDL2=1;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"RelWithDebInfo\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;D:\Programming\Personal\emuGBDS\mgba-master\include;D:\Programming\Personal\emuGBDS\build\mgba-master\include;D:\Programming\Personal\emuGBDS\sdl\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;EMUGBDS_HAS_MELONDS=0;EMUGBDS_HAS_MGBA=0;EMUGBDS_HAS_SDL2=1;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"RelWithDebInfo\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;D:\Programming\Personal\emuGBDS\sdl\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;D:\Programming\Personal\emuGBDS\mgba-master\include;D:\Programming\Personal\emuGBDS\build\mgba-master\include;D:\Programming\Personal\emuGBDS\sdl\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\Programming\Personal\emuGBDS\host\include;D:\Programming\Personal\emuGBDS\sdl\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -345,7 +345,7 @@ exit /b %1
 if %errorlevel% neq 0 goto :VCEnd</Command>
     </PostBuildEvent>
     <Link>
-      <AdditionalDependencies>mgba-master\RelWithDebInfo\mgba.lib;ws2_32.lib;shlwapi.lib;D:\Programming\Personal\emuGBDS\sdl\lib\x64\SDL2.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalDependencies>D:\Programming\Personal\emuGBDS\sdl\lib\x64\SDL2.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
       <DataExecutionPrevention></DataExecutionPrevention>
@@ -422,10 +422,18 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   <ItemGroup>
     <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\main.cpp" />
     <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\core\ModeCoordinator.cpp" />
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\runtime\RuntimeKernel.cpp" />
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\boot\BootPolicy.cpp" />
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\scheduler\FrameScheduler.cpp" />
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\av\VideoPipeline.cpp" />
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\av\AudioPipeline.cpp" />
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\ingba\Core.cpp" />
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\gba\GbaCartridgeHeader.cpp" />
     <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\frontend\GbaSdlFrontend.cpp" />
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\cores\InHouseGbaCoreAdapter.cpp" />
     <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\cores\MGbaCoreAdapter.cpp" />
     <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\cores\MelonDsCoreAdapter.cpp" />
-    <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\melonds\MelonDsPlatformShim.cpp" />
+    <ClCompile Include="D:\Programming\Personal\emuGBDS\host\src\nds\NdsPlatformShim.cpp" />
   </ItemGroup>
   <ItemGroup />
   <ItemGroup>
@@ -434,10 +442,6 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <Name>ZERO_CHECK</Name>
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
       <CopyToOutputDirectory>Never</CopyToOutputDirectory>
-    </ProjectReference>
-    <ProjectReference Include="D:\Programming\Personal\emuGBDS\build\mgba-master\mgba.vcxproj">
-      <Project>{00725ABC-968A-3769-B079-88A78ED5D795}</Project>
-      <Name>mgba</Name>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
