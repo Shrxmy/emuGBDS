@@ -81,6 +81,9 @@ set(EMUGBDS_INHOUSE_DS_SOURCES
     host/src/inds/Core.cpp
     host/src/inds/MemoryBus.cpp
     host/src/inds/Cp15.cpp
+    host/src/inds/Io.cpp
+    host/src/inds/Ipc.cpp
+    host/src/inds/Timers.cpp
 )
 
 add_executable(emugbds

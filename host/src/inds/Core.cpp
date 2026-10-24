@@ -14,7 +14,10 @@ constexpr uint64_t kFirmwareSlot2TransitionFrames = 2u;
 // One frame is 263 lines x 355 dots x 6 cycles of the 33.51 MHz ARM7 clock;
 // the ARM9 runs at twice that rate.
 constexpr uint32_t kArm7CyclesPerFrame = 560190u;
+constexpr uint32_t kCyclesPerLine = 2130u;   // 355 dots x 6
+constexpr uint32_t kHBlankStartCycle = 1536u; // after 256 visible dots
 constexpr uint32_t kSliceCycles = 32u;
+constexpr uint32_t kIrqVectorOffset = 0x18u;
 
 constexpr uint32_t kHeaderCopyAddress = 0x027FFE00u;
 constexpr uint32_t kHeaderCopySize = 0x170u;
@@ -158,21 +161,33 @@ bool Core::RunFrame(std::string& error) {
     if (cpus_active_) {
         arm9_.set_trace_frame(frame_counter_);
         arm7_.set_trace_frame(frame_counter_);
+        Io& io = bus_.io();
+        io.StartLine(0u);
         // shortcut: one instruction per cycle on both CPUs at the fixed 2:1 clock ratio, interleaved in
         // short slices; replace with per-instruction timing once games depend on it.
         for (uint32_t done = 0u; done < kArm7CyclesPerFrame; done += kSliceCycles) {
             const uint32_t slice = std::min(kSliceCycles, kArm7CyclesPerFrame - done);
-            for (uint32_t i = 0u; i < slice * 2u && !arm9_halted_; ++i) {
-                if (!arm9_.Step(error)) {
-                    return false;
-                }
-                arm9_halted_ = bus_.cp15().ConsumeHaltRequest(); // Nothing wakes it until IRQs exist.
+            if (!RunCpu(arm9_, 0, slice * 2u, error) ||
+                (!io.gba_mode_requested() && !RunCpu(arm7_, 1, slice, error))) {
+                return false;
             }
-            for (uint32_t i = 0u; i < slice; ++i) {
-                if (!arm7_.Step(error)) {
-                    return false;
+            if (io.ConsumeGbaModeRequest()) {
+                // The ARM7 asked the hardware to restart as a GBA (HALTCNT power-down mode 1).
+                core::TransitionEvent event;
+                event.from_mode = core::EmuMode::DS;
+                event.to_mode = core::EmuMode::GBA;
+                event.reason = "DS ARM7 entered GBA mode (HALTCNT)";
+                pending_transition_ = event;
+                cpus_active_ = false;
+                if (trace_transition_) {
+                    std::cout << "[inds] ARM7 wrote HALTCNT GBA mode; switching to GBA\n";
                 }
+                break;
             }
+            // shortcut: timers advance once per slice with their end-of-slice settings, so starting or
+            // stopping one mid-slice is off by up to kSliceCycles; sync on timer access if a game needs it.
+            io.AdvanceTimers(slice);
+            AdvanceLcd(done, done + slice);
         }
     }
 
@@ -197,6 +212,49 @@ bool Core::RunFrame(std::string& error) {
     return true;
 }
 
+bool Core::RunCpu(arm::ArmCpu& cpu, int index, uint32_t steps, std::string& error) {
+    Io& io = bus_.io();
+    bool& halted = index == 0 ? arm9_halted_ : arm7_halted_;
+    for (uint32_t i = 0u; i < steps; ++i) {
+        if (halted) {
+            if (!io.WakeRequested(index)) {
+                return true; // Stays halted for the rest of this slice.
+            }
+            halted = false;
+        }
+        arm::CpuState& state = cpu.state();
+        if ((state.cpsr & arm::kCpsrIrqDisableBit) == 0u && io.IrqAsserted(index)) {
+            // The IRQ is taken before the instruction at r15; the BIOS returns with SUBS PC, LR, #4.
+            const uint32_t vector_base = index == 0 ? bus_.cp15().exception_base() : 0u;
+            cpu.EnterException(arm::kCpuModeIrq, vector_base + kIrqVectorOffset, false, state.r[15] + 4u, true);
+        }
+        if (!cpu.Step(error)) {
+            return false;
+        }
+        halted = index == 0 ? bus_.cp15().ConsumeHaltRequest() : io.ConsumeArm7HaltRequest();
+        if (io.gba_mode_requested()) {
+            return true; // The DS stops at the instruction that requested GBA mode.
+        }
+    }
+    return true;
+}
+
+
+void Core::AdvanceLcd(uint32_t from, uint32_t to) {
+    Io& io = bus_.io();
+    for (uint32_t line = from / kCyclesPerLine; line * kCyclesPerLine <= to; ++line) {
+        const uint32_t line_start = line * kCyclesPerLine;
+        if (line_start > from && line_start < kArm7CyclesPerFrame) {
+            io.StartLine(static_cast<uint16_t>(line)); // Line 0 starts with the frame.
+        }
+        const uint32_t hblank = line_start + kHBlankStartCycle;
+        if (hblank > from && hblank <= to) {
+            io.StartHBlank();
+        }
+    }
+}
+
+
 bool Core::Reset(std::string& error) {
     bus_.ResetMemory();
     arm9_.Reset();
@@ -205,6 +263,7 @@ bool Core::Reset(std::string& error) {
     arm9_.WriteCpsr(kCpsrSvc);
     arm7_.WriteCpsr(kCpsrSvc);
     arm9_halted_ = false;
+    arm7_halted_ = false;
     cpus_active_ = false;
     pending_transition_.reset();
     firmware_menu_frame_counter_ = 0;

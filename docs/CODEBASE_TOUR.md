@@ -89,16 +89,22 @@ the single source-of-truth when adding a new GBA module.
 - ARM9 CP15 (control register, TCM regions, wait for interrupt):
   - `host/include/emugbds/inds/Cp15.h`
   - `host/src/inds/Cp15.cpp`
+- I/O, IPC, and timers:
+  - `host/include/emugbds/inds/Io.h`, `Ipc.h`, `Timers.h`
+  - `host/src/inds/Io.cpp`, `Ipc.cpp`, `Timers.cpp`
 
 Current DS core status:
 - ARM9 (ARMv5TE) and ARM7 (ARMv4T) execute real code, interleaved 2:1.
 - A loaded `.nds` is direct-booted: header copied to 027FFE00h, both binaries
   loaded, both CPUs started at their entry points; SWIs run the BIOS images.
-- ARM9/ARM7 memory maps with ITCM/DTCM and WRAMCNT; I/O beyond WRAMCNT is not
-  emulated yet and is listed by `--debug-stats` in DS mode.
-- Without a cartridge, ds-firmware mode keeps the Slot-2 GBA handoff (the
-  firmware menu itself is not emulated).
-- No interrupts, IPC, timers, or video yet.
+- ARM9/ARM7 memory maps with ITCM/DTCM and WRAMCNT.
+- Interrupts (IME/IE/IF, halt and wake), IPC sync/FIFO, timers, DMA
+  (immediate, V-Blank, H-Blank), DISPSTAT/VCOUNT line timing.
+- An ARM7 HALTCNT GBA-mode write switches the console to the GBA core.
+- Unemulated I/O is listed by `--debug-stats` in DS mode (next: cartridge
+  bus, SPI firmware/touch/power, RTC, math unit, video).
+- Without a cartridge, ds-firmware mode keeps the simulated Slot-2 GBA handoff
+  (the firmware itself is not run yet).
 
 ## 6) Boot Policy (Default BIOS Paths)
 

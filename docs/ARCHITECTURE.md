@@ -62,13 +62,19 @@ coordinate modules rather than grow new device implementations.
 
 | Module | Owns |
 | --- | --- |
-| `Core.cpp` | ARM9/ARM7 `ArmCpu` instances and their hosts (BIOS SWI vectors, CP15), the 2:1 scheduler, direct boot |
-| `MemoryBus.cpp` | ARM9/ARM7 bus views, RAM/TCM/WRAM mapping, I/O, the unmapped-access log |
+| `Core.cpp` | ARM9/ARM7 `ArmCpu` instances and their hosts (BIOS SWI vectors, CP15), the 2:1 scheduler, IRQ delivery and halt/wake, LCD line timing, direct boot, the HALTCNT GBA-mode transition |
+| `MemoryBus.cpp` | ARM9/ARM7 bus views, RAM/TCM/WRAM mapping, DMA access (no TCM), routing I/O to `Io`, the unmapped-access log |
+| `Io.cpp` | per-CPU I/O registers: IME/IE/IF, DISPSTAT/VCOUNT, DMA, keypad, POSTFLG, HALTCNT, POWCNT, EXMEMCNT, VRAMCNT/WRAMCNT |
+| `Ipc.cpp` | IPCSYNC and the two IPC FIFOs with their edge-triggered IRQs |
+| `Timers.cpp` | one CPU's four 33.51 MHz timers with cascade and overflow IRQs |
 | `Cp15.cpp` | ARM9 CP15: ID and control registers, TCM regions, wait for interrupt |
 
 The ARM9's CP15 is owned by the memory object because its TCM settings decide
-the ARM9 memory map. A loaded cartridge is always direct-booted; the firmware
-menu is not emulated.
+the ARM9 memory map. I/O is dispatched per 32-bit register word with a byte-lane
+mask, so side effects (FIFO pops) happen once per access. A loaded cartridge is
+always direct-booted; the firmware menu is not emulated. When the ARM7 writes
+HALTCNT power-down mode 1 (GBA mode), the DS core raises the DS -> GBA
+transition, the same event the runtime uses for Slot-2 boot.
 
 ## Build ownership
 

@@ -2172,6 +2172,197 @@ void TestIndsWramcnt(TestContext& t) {
     t.Expect(arm7.Read32(0x04000240u) == 0x00000200u, "WRAMSTAT keeps its lane in a wide ARM7 read");
 }
 
+void TestIndsTimers(TestContext& t) {
+    emugbds::inds::Timers timers;
+    timers.Reset();
+    timers.WriteWord(0x0u, 0x00C0FFFEu, 0xFFFFFFFFu); // TM0: reload FFFEh, IRQ, start, F/1
+    t.Expect((timers.ReadWord(0x0u) & 0xFFFFu) == 0xFFFEu, "DS timer start loads the reload value");
+    t.Expect(timers.Advance(1u) == 0u && (timers.ReadWord(0x0u) & 0xFFFFu) == 0xFFFFu, "DS timer counts at F/1");
+    t.Expect(timers.Advance(1u) == (1u << 3), "DS timer overflow requests IRQ 3");
+    timers.WriteWord(0x4u, 0x00C4FFFFu, 0xFFFFFFFFu); // TM1: count-up, IRQ, start, reload FFFFh
+    t.Expect(timers.Advance(2u) == ((1u << 3) | (1u << 4)), "DS count-up timer ticks on the lower timer's overflow");
+    timers.WriteWord(0x8u, 0x00810000u, 0xFFFFFFFFu); // TM2: F/64, no IRQ
+    timers.Advance(63u);
+    t.Expect((timers.ReadWord(0x8u) & 0xFFFFu) == 0u, "DS F/64 timer waits for 64 cycles");
+    timers.Advance(1u);
+    t.Expect((timers.ReadWord(0x8u) & 0xFFFFu) == 1u, "DS F/64 timer ticks after 64 cycles");
+}
+
+void TestIndsIpc(TestContext& t) {
+    emugbds::inds::Ipc ipc;
+    ipc.Reset();
+    ipc.WriteSync(0, 0x0500u, 0xFFFFu);
+    t.Expect((ipc.ReadSync(1) & 0xFu) == 5u && (ipc.ReadSync(0) & 0xF00u) == 0x500u, "IPCSYNC output reaches the other CPU");
+    ipc.WriteSync(0, 0x2000u, 0xFFFFu);
+    t.Expect(ipc.TakeIrqs(1) == 0u, "IPCSYNC IRQ needs the receiver's enable bit");
+    ipc.WriteSync(1, 0x4000u, 0xFFFFu);
+    ipc.WriteSync(0, 0x2000u, 0xFFFFu);
+    t.Expect(ipc.TakeIrqs(1) == emugbds::inds::Ipc::kSyncIrq, "IPCSYNC bit 13 raises the remote IRQ");
+
+    ipc.WriteFifoControl(0, 0x8000u, 0xFFFFu);          // ARM9: enable
+    ipc.WriteFifoControl(1, 0x8000u | 0x0400u, 0xFFFFu); // ARM7: enable + recv-not-empty IRQ
+    t.Expect((ipc.ReadFifoControl(1) & 0x0100u) != 0u, "ARM7 receive FIFO starts empty");
+    ipc.Send(0, 0x11111111u);
+    ipc.Send(0, 0x22222222u);
+    t.Expect(ipc.TakeIrqs(1) == emugbds::inds::Ipc::kRecvNotEmptyIrq, "receive-not-empty IRQ fires once on the edge");
+    t.Expect(ipc.Receive(1) == 0x11111111u && ipc.Receive(1) == 0x22222222u, "IPC FIFO is first in, first out");
+    t.Expect(ipc.Receive(1) == 0x22222222u && (ipc.ReadFifoControl(1) & 0x4000u) != 0u, "empty FIFO read repeats the last word and flags an error");
+    for (int i = 0; i < 17; ++i) {
+        ipc.Send(0, static_cast<uint32_t>(i));
+    }
+    t.Expect((ipc.ReadFifoControl(0) & 0x4002u) == 0x4002u, "sending to a full FIFO flags an error");
+    ipc.WriteFifoControl(0, 0x8008u | 0x4000u, 0xFFFFu); // clear send FIFO, acknowledge error
+    t.Expect((ipc.ReadFifoControl(0) & 0x4001u) == 0x0001u, "FIFO clear empties it and the error acknowledges");
+}
+
+void TestIndsIoInterruptsAndDma(TestContext& t) {
+    emugbds::inds::MemoryBus bus;
+    auto& arm9 = bus.arm9();
+    auto& io = bus.io();
+    arm9.Write32(0x04000210u, 0x00000005u); // IE: VBlank + VCount
+    arm9.Write16(0x04000004u, 0x0A28u);     // DISPSTAT: VBlank + VCount IRQ, LYC 10
+    arm9.Write32(0x04000208u, 1u);          // IME
+    io.StartLine(10u);
+    t.Expect((arm9.Read16(0x04000004u) & 0x4u) != 0u && arm9.Read16(0x04000006u) == 10u, "VCOUNT match sets the flag");
+    t.Expect(arm9.Read32(0x04000214u) == 0x4u && io.IrqAsserted(0), "VCOUNT match requests its IRQ");
+    io.StartLine(192u);
+    t.Expect((arm9.Read16(0x04000004u) & 0x1u) != 0u && arm9.Read32(0x04000214u) == 0x5u, "line 192 starts V-Blank with its IRQ");
+    arm9.Write32(0x04000214u, 0x4u);
+    t.Expect(arm9.Read32(0x04000214u) == 0x1u, "IF is acknowledged by writing 1");
+    t.Expect(!io.IrqAsserted(1), "the ARM7 has its own interrupt controller");
+
+    // Immediate DMA copies main RAM; DMA never sees the DTCM.
+    arm9.Write32(0x02000100u, 0xCAFEF00Du);
+    bus.cp15().Write(0u, 9u, 1u, 0u, 0x0200000Au); // DTCM over 02000000h
+    bus.cp15().Write(0u, 1u, 0u, 0u, 1u << 16);
+    arm9.Write32(0x02000100u, 0x0BADBEEFu);       // Lands in DTCM only
+    arm9.Write32(0x040000D4u, 0x02000100u);       // DMA3 SAD
+    arm9.Write32(0x040000D8u, 0x02100000u);       // DMA3 DAD
+    arm9.Write32(0x040000DCu, 0x84000001u);       // enable, 32-bit, immediate, 1 word
+    t.Expect(arm9.Read32(0x02100000u) == 0xCAFEF00Du, "ARM9 DMA reads main RAM underneath the DTCM");
+    t.Expect((arm9.Read32(0x040000DCu) & 0x80000000u) == 0u, "immediate DMA clears its enable bit");
+
+    arm9.Write32(0x040000C8u, 0x02100000u);       // DMA2 SAD
+    arm9.Write32(0x040000CCu, 0x02100010u);       // DMA2 DAD
+    arm9.Write32(0x040000D0u, 0x8C000001u);       // enable, 32-bit, V-Blank start (mode 1)
+    t.Expect(arm9.Read32(0x02100010u) == 0u, "V-Blank DMA waits for V-Blank");
+    io.StartLine(192u);
+    t.Expect(arm9.Read32(0x02100010u) == 0xCAFEF00Du, "V-Blank DMA runs at line 192");
+
+    arm9.Write16(0x04000004u, 0xC008u);           // LYC = 192, V-Blank IRQ enable
+    arm9.Write32(0x040000BCu, 0x04000004u);       // DMA1 SAD: DISPSTAT
+    arm9.Write32(0x040000C0u, 0x02100020u);       // DMA1 DAD
+    arm9.Write32(0x040000C4u, 0x88000001u);       // enable, 16-bit, V-Blank start, 1 unit
+    io.StartLine(191u);
+    io.StartLine(192u);
+    t.Expect((arm9.Read16(0x02100020u) & 0x4u) != 0u, "V-Blank DMA sees the VCOUNT match of line 192");
+}
+
+// Builds a direct-boot ROM: ARM9 code at ROM 400h -> 02000000h, ARM7 code at ROM 800h -> 02380000h.
+std::vector<uint8_t> BuildDualCpuNdsRom(const std::vector<uint32_t>& arm9, const std::vector<uint32_t>& arm7) {
+    std::vector<uint8_t> rom = BuildSyntheticNdsRom();
+    rom.resize(0x1000u, 0u);
+    WriteLe32(rom, 0x20, 0x00000400u);
+    WriteLe32(rom, 0x2C, 0x00000200u);
+    WriteLe32(rom, 0x30, 0x00000800u);
+    WriteLe32(rom, 0x3C, 0x00000200u);
+    for (size_t i = 0; i < arm9.size(); ++i) {
+        WriteLe32(rom, 0x400u + i * 4u, arm9[i]);
+    }
+    for (size_t i = 0; i < arm7.size(); ++i) {
+        WriteLe32(rom, 0x800u + i * 4u, arm7[i]);
+    }
+    return rom;
+}
+
+bool BootSyntheticDs(TestContext& t, emugbds::inds::Core& core, const std::filesystem::path& rom_path) {
+    std::string error;
+    const bool ok = core.Configure(std::nullopt, std::nullopt, std::nullopt, emugbds::core::DsBootMode::Direct, false, error) &&
+        core.Initialize(error) && core.LoadPrimaryRom(rom_path, error);
+    t.Expect(ok, "synthetic DS ROM direct-boots");
+    return ok;
+}
+
+void TestIndsIrqWakesHaltedArm9(TestContext& t) {
+    const auto dir = MakeTempRoot() / "inds-irq";
+    std::filesystem::create_directories(dir);
+    const auto nds = dir / "irq.nds";
+    const uint32_t spin = EncodeBranchRelativeWords(-2);
+    // Handler (copied to ITCM 18h): acknowledge V-Blank, mark r6, return.
+    std::vector<uint32_t> arm9(0x60u, 0u);
+    auto at = [&](uint32_t offset, uint32_t word) { arm9[offset / 4u] = word; };
+    at(0x00u, EncodeLdrLiteralAt(0u, 0x00u, 0x100u));  // r0 = handler source
+    at(0x04u, EncodeMovImm(1u, 0x18u));                // r1 = IRQ vector (low vectors)
+    at(0x08u, EncodeLdmiaWriteback(0u, 0x003Cu));      // copy 8 words: r2-r5 twice
+    at(0x0Cu, EncodeStmiaWriteback(1u, 0x003Cu));
+    at(0x10u, EncodeLdmiaWriteback(0u, 0x003Cu));
+    at(0x14u, EncodeStmiaWriteback(1u, 0x003Cu));
+    at(0x18u, 0xEE112F10u);                            // MRC p15, 0, r2, c1, c0, 0
+    at(0x1Cu, 0xE3C22A02u);                            // BIC r2, r2, #2000h (low vectors)
+    at(0x20u, 0xEE012F10u);                            // MCR p15, 0, r2, c1, c0, 0
+    at(0x24u, EncodeLdrLiteralAt(0u, 0x24u, 0x104u));  // r0 = DISPSTAT
+    at(0x28u, EncodeMovImm(1u, 8u));
+    at(0x2Cu, EncodeStrhImm(1u, 0u, 0u));              // V-Blank IRQ enable
+    at(0x30u, EncodeLdrLiteralAt(0u, 0x30u, 0x108u));  // r0 = IME
+    at(0x34u, EncodeMovImm(1u, 1u));
+    at(0x38u, EncodeStrReg(1u, 0u, 0u));               // IME = 1
+    at(0x3Cu, EncodeStrReg(1u, 0u, 8u));               // IE = V-Blank
+    at(0x40u, 0xE321F01Fu);                            // MSR CPSR_c, #1Fh: IRQs on
+    at(0x44u, 0xEE070F90u);                            // MCR p15, 0, r0, c7, c0, 4: wait for interrupt
+    at(0x48u, EncodeMovImm(7u, 0x55u));                // runs after the IRQ returns
+    at(0x4Cu, spin);
+    // Handler words at 100h-ish source; literals after them.
+    at(0x80u, EncodeLdrLiteralAt(0u, 0x00u, 0x14u));   // (relative to 18h) r0 = IF
+    at(0x84u, EncodeMovImm(1u, 1u));
+    at(0x88u, EncodeStrReg(1u, 0u, 0u));               // acknowledge V-Blank
+    at(0x8Cu, EncodeMovImm(6u, 0x99u));
+    at(0x90u, EncodeSubImmSetFlags(15u, 14u, 4u));     // SUBS pc, lr, #4
+    at(0x94u, 0x04000214u);
+    at(0x100u, 0x02000080u);
+    at(0x104u, 0x04000004u);
+    at(0x108u, 0x04000208u);
+    arm9.resize(0x110u / 4u);
+    WriteFile(nds, BuildDualCpuNdsRom(arm9, {spin}));
+
+    emugbds::inds::Core core;
+    if (!BootSyntheticDs(t, core, nds)) {
+        return;
+    }
+    std::string error;
+    t.Expect(core.RunFrame(error), "inds IRQ core runs a frame");
+    t.Expect(core.arm9().r[6] == 0x99u, "V-Blank IRQ enters the ARM9 handler through the vector");
+    t.Expect(core.arm9().r[7] == 0x55u && !core.arm9_halted(), "the IRQ wakes the halted ARM9 and returns to its code");
+    t.Expect((core.arm9().cpsr & 0x1Fu) == 0x1Fu, "the handler returns to System mode");
+}
+
+void TestIndsHaltcntGbaModeTransition(TestContext& t) {
+    const auto dir = MakeTempRoot() / "inds-gba-mode";
+    std::filesystem::create_directories(dir);
+    const auto nds = dir / "gba_mode.nds";
+    const uint32_t spin = EncodeBranchRelativeWords(-2);
+    WriteFile(nds, BuildDualCpuNdsRom({spin}, {
+        EncodeLdrLiteralAt(0u, 0x00u, 0x20u),  // r0 = POSTFLG/HALTCNT
+        EncodeLdrLiteralAt(1u, 0x04u, 0x24u),  // r1 = HALTCNT mode 1 in the upper byte
+        EncodeStrhImm(1u, 0u, 0u),
+        EncodeMovImm(5u, 0x77u), // Must not run: the DS stops at the GBA-mode request.
+        spin, 0u, 0u, 0u,
+        0x04000300u, 0x00004000u,
+    }));
+
+    emugbds::inds::Core core;
+    if (!BootSyntheticDs(t, core, nds)) {
+        return;
+    }
+    std::string error;
+    t.Expect(core.RunFrame(error), "inds GBA-mode core runs a frame");
+    const auto transition = core.PollTransition();
+    t.Expect(transition.has_value() && transition->to_mode == emugbds::core::EmuMode::GBA,
+        "ARM7 HALTCNT GBA mode requests the DS -> GBA transition");
+    t.Expect(transition.has_value() && transition->reason.find("HALTCNT") != std::string::npos,
+        "the transition names its HALTCNT cause");
+    t.Expect(core.arm7().r[5] == 0u, "the ARM7 stops at the instruction that requested GBA mode");
+}
+
 void TestIndsDirectBootRunsBothCpus(TestContext& t) {
     const auto dir = MakeTempRoot() / "inds-dual-cpu";
     std::filesystem::create_directories(dir);
@@ -2414,7 +2605,7 @@ int RunUnitTests() {
         void (*fn)(TestContext&);
     };
 
-    const std::array<NamedTest, 47> tests = {{
+    const std::array<NamedTest, 52> tests = {{
         {"arm_v5_clz_and_saturation", &TestArmV5ClzAndSaturation},
         {"arm_v5_halfword_multiplies", &TestArmV5HalfwordMultiplies},
         {"arm_v5_branches_and_interworking", &TestArmV5BranchesAndInterworking},
@@ -2456,6 +2647,11 @@ int RunUnitTests() {
         {"inds_cp15_and_tcm", &TestIndsCp15AndTcm},
         {"inds_wramcnt", &TestIndsWramcnt},
         {"inds_direct_boot_runs_both_cpus", &TestIndsDirectBootRunsBothCpus},
+        {"inds_timers", &TestIndsTimers},
+        {"inds_ipc", &TestIndsIpc},
+        {"inds_io_interrupts_and_dma", &TestIndsIoInterruptsAndDma},
+        {"inds_irq_wakes_halted_arm9", &TestIndsIrqWakesHaltedArm9},
+        {"inds_haltcnt_gba_mode_transition", &TestIndsHaltcntGbaModeTransition},
         {"inds_core_firmware_slot2_transition", &TestIndsCoreFirmwareSlot2Transition},
         {"inds_core_direct_nds_boot", &TestIndsCoreDirectNdsBoot},
         {"runtime_kernel_inject_input_to_gba", &TestRuntimeKernelInjectInputToGba},

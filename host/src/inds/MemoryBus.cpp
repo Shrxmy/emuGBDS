@@ -8,8 +8,12 @@ namespace emugbds::inds {
 namespace {
 
 constexpr uint32_t kIoRegion = 0x04u;
-constexpr uint32_t kWramCntAddress = 0x04000247u;  // ARM9 WRAMCNT (R/W)
-constexpr uint32_t kWramStatAddress = 0x04000241u; // ARM7 WRAMSTAT (R)
+
+// Byte-lane mask of an aligned access of `size` bytes within its 32-bit word.
+uint32_t LaneMask(uint32_t address, uint32_t size) {
+    const uint32_t lanes = size == 4u ? 0xFFFFFFFFu : ((1u << (size * 8u)) - 1u);
+    return lanes << ((address & 3u) * 8u);
+}
 
 bool LoadWholeFile(const std::filesystem::path& path, std::vector<uint8_t>& out_bytes, std::string& error) {
     std::ifstream input(path, std::ios::binary);
@@ -36,6 +40,7 @@ MemoryBus::MemoryBus()
       itcm_(Cp15::kItcmPhysicalSize, 0u),
       dtcm_(Cp15::kDtcmPhysicalSize, 0u) {
     cp15_.Reset();
+    io_.Reset();
 }
 
 bool MemoryBus::LoadBios7(const std::filesystem::path& bios_path, std::string& error) {
@@ -72,18 +77,19 @@ void MemoryBus::ResetMemory() {
     }
     wramcnt_ = 3u; // Power-on: all shared WRAM belongs to the ARM7.
     cp15_.Reset();
+    io_.Reset();
     arm9_unmapped_ = {};
     arm7_unmapped_ = {};
 }
 
 
-uint8_t* MemoryBus::Arm9Pointer(uint32_t address, bool write) {
+uint8_t* MemoryBus::Arm9Pointer(uint32_t address, bool write, bool use_tcm) {
     // ITCM has priority over DTCM; neither is mirrored outside its virtual size.
     // A TCM in load mode only takes writes.
-    if (cp15_.itcm_enabled() && (write || !cp15_.itcm_load_mode()) && address < cp15_.itcm_size()) {
+    if (use_tcm && cp15_.itcm_enabled() && (write || !cp15_.itcm_load_mode()) && address < cp15_.itcm_size()) {
         return &itcm_[address & (Cp15::kItcmPhysicalSize - 1u)];
     }
-    if (cp15_.dtcm_enabled() && (write || !cp15_.dtcm_load_mode()) &&
+    if (use_tcm && cp15_.dtcm_enabled() && (write || !cp15_.dtcm_load_mode()) &&
         static_cast<uint32_t>(address - cp15_.dtcm_base()) < cp15_.dtcm_size()) {
         return &dtcm_[(address - cp15_.dtcm_base()) & (Cp15::kDtcmPhysicalSize - 1u)];
     }
@@ -135,36 +141,17 @@ uint8_t* MemoryBus::Arm7Pointer(uint32_t address, bool write) {
 }
 
 
-bool MemoryBus::ReadIoByte(bool arm9, uint32_t address, uint8_t& value) const {
-    value = 0u;
-    if ((arm9 && address == kWramCntAddress) || (!arm9 && address == kWramStatAddress)) {
-        value = wramcnt_;
-        return true;
-    }
-    return false;
-}
-
-
-bool MemoryBus::WriteIoByte(bool arm9, uint32_t address, uint8_t value) {
-    if (arm9 && address == kWramCntAddress) {
-        wramcnt_ = static_cast<uint8_t>(value & 0x3u);
-        return true;
-    }
-    return false;
-}
-
-
-uint32_t MemoryBus::Read(bool arm9, uint32_t address, uint32_t size) const {
+uint32_t MemoryBus::Read(bool arm9, uint32_t address, uint32_t size, bool use_tcm) const {
     if ((address & (size - 1u)) != 0u) {
         uint32_t value = 0u;
         for (uint32_t i = 0u; i < size; ++i) {
-            value |= Read(arm9, address + i, 1u) << (8u * i);
+            value |= Read(arm9, address + i, 1u, use_tcm) << (8u * i);
         }
         return value;
     }
-    // Reads never modify memory; the pointer lookups are shared with writes.
+    // Memory reads never modify state; I/O reads can (FIFO pops), as on hardware.
     auto& self = const_cast<MemoryBus&>(*this);
-    if (const uint8_t* bytes = arm9 ? self.Arm9Pointer(address, false) : self.Arm7Pointer(address, false)) {
+    if (const uint8_t* bytes = arm9 ? self.Arm9Pointer(address, false, use_tcm) : self.Arm7Pointer(address, false)) {
         uint32_t value = 0u;
         for (uint32_t i = 0u; i < size; ++i) {
             value |= static_cast<uint32_t>(bytes[i]) << (8u * i);
@@ -172,49 +159,39 @@ uint32_t MemoryBus::Read(bool arm9, uint32_t address, uint32_t size) const {
         return value;
     }
 
-    // Each byte lane is decoded on its own; undefined I/O lanes read as zero on the DS.
     const bool io = (address >> 24u) == kIoRegion;
-    uint32_t value = 0u;
-    bool known = io;
-    for (uint32_t i = 0u; io && i < size; ++i) {
-        uint8_t byte = 0u;
-        if (!ReadIoByte(arm9, address + i, byte)) {
-            known = false;
-        }
-        value |= static_cast<uint32_t>(byte) << (8u * i);
+    const uint32_t mask = LaneMask(address, size);
+    uint32_t word = 0u;
+    if (io && self.io_.ReadWord(arm9 ? 0 : 1, address & ~3u, mask, word)) {
+        return (word & mask) >> ((address & 3u) * 8u);
     }
-    if (!known) {
-        auto& log = arm9 ? arm9_unmapped_ : arm7_unmapped_;
-        ++log.reads[io ? address : (address & 0xFFFF0000u)];
-    }
-    return value;
+    auto& log = arm9 ? arm9_unmapped_ : arm7_unmapped_;
+    ++log.reads[io ? address : (address & 0xFFFF0000u)];
+    return 0u; // Undefined I/O reads as zero on the DS.
 }
 
 
-void MemoryBus::Write(bool arm9, uint32_t address, uint32_t value, uint32_t size) {
+void MemoryBus::Write(bool arm9, uint32_t address, uint32_t value, uint32_t size, bool use_tcm) {
     if ((address & (size - 1u)) != 0u) {
         for (uint32_t i = 0u; i < size; ++i) {
-            Write(arm9, address + i, (value >> (8u * i)) & 0xFFu, 1u);
+            Write(arm9, address + i, (value >> (8u * i)) & 0xFFu, 1u, use_tcm);
         }
         return;
     }
-    if (uint8_t* bytes = arm9 ? Arm9Pointer(address, true) : Arm7Pointer(address, true)) {
+    if (uint8_t* bytes = arm9 ? Arm9Pointer(address, true, use_tcm) : Arm7Pointer(address, true)) {
         for (uint32_t i = 0u; i < size; ++i) {
             bytes[i] = static_cast<uint8_t>(value >> (8u * i));
         }
         return;
     }
 
-    bool known = (address >> 24u) == kIoRegion;
-    for (uint32_t i = 0u; i < size; ++i) {
-        if ((address >> 24u) == kIoRegion && !WriteIoByte(arm9, address + i, static_cast<uint8_t>(value >> (8u * i)))) {
-            known = false;
-        }
+    const bool io = (address >> 24u) == kIoRegion;
+    const uint32_t shift = (address & 3u) * 8u;
+    if (io && io_.WriteWord(arm9 ? 0 : 1, address & ~3u, size == 4u ? value : (value << shift), LaneMask(address, size))) {
+        return;
     }
-    if (!known) {
-        auto& log = arm9 ? arm9_unmapped_ : arm7_unmapped_;
-        ++log.writes[(address >> 24u) == kIoRegion ? address : (address & 0xFFFF0000u)];
-    }
+    auto& log = arm9 ? arm9_unmapped_ : arm7_unmapped_;
+    ++log.writes[io ? address : (address & 0xFFFF0000u)];
 }
 
 } // namespace emugbds::inds

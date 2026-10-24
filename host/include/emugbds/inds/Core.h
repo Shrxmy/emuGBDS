@@ -41,6 +41,7 @@ public:
     const arm::ArmCpu& arm7_cpu() const noexcept { return arm7_; }
     const MemoryBus& memory() const noexcept { return bus_; }
     bool arm9_halted() const noexcept { return arm9_halted_; }
+    bool arm7_halted() const noexcept { return arm7_halted_; }
     uint64_t frame_counter() const noexcept { return frame_counter_; }
     std::optional<nds::NdsCartridgeHeaderInfo> nds_header() const noexcept { return nds_header_; }
     std::optional<gba::GbaCartridgeHeaderInfo> slot2_header() const noexcept { return slot2_header_; }
@@ -62,6 +63,10 @@ private:
     };
 
     bool DirectBoot(std::string& error);
+    // Runs up to `steps` instructions unless the CPU halts; IRQs are taken between instructions.
+    bool RunCpu(arm::ArmCpu& cpu, int index, uint32_t steps, std::string& error);
+    // Raises the LCD line-start and H-Blank events in (from, to] (frame-relative ARM7 cycles).
+    void AdvanceLcd(uint32_t from, uint32_t to);
     bool ShouldRequestFirmwareSlot2Transition() const noexcept;
 
     MemoryBus bus_{};
@@ -81,6 +86,7 @@ private:
     bool slot2_rom_loaded_ = false;
     bool cpus_active_ = false; // Only a direct-booted cartridge runs code; the firmware menu is not emulated.
     bool arm9_halted_ = false;
+    bool arm7_halted_ = false;
     core::DsBootMode boot_mode_ = core::DsBootMode::Auto;
     uint64_t frame_counter_ = 0;
     uint64_t firmware_menu_frame_counter_ = 0;

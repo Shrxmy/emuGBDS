@@ -34,9 +34,12 @@ Goal: progress from scaffold to executable ARM9/ARM7 instruction core.
 
 1. Done: shared ARM CPU (ARMv4T/ARMv5TE) running both DS CPUs.
 2. Done: ARM9/ARM7 memory maps with TCM (CP15) and WRAMCNT; direct boot.
-3. Next: interrupt controllers, IPC sync/FIFO, timers, DMA, LCD timing.
-4. Then: 2D engines, then 3D, sound, and firmware/BIOS boot flow.
-5. Keep Slot-2 transition support as an integration target.
+3. Done: interrupt controllers, IPC sync/FIFO, timers, DMA, LCD timing,
+   HALTCNT GBA mode as the real DS -> GBA transition.
+4. Next: boot the real BIOS and firmware (SPI flash/power/touch, RTC, empty
+   cartridge slot) so the firmware itself hands Slot-2 GBA games to the GBA core.
+5. Then: 2D engines, then 3D and sound.
+6. Keep Slot-2 transition support as an integration target.
 
 ## Phase 4: Runtime and Tooling
 

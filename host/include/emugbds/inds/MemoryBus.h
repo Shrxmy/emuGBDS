@@ -5,6 +5,7 @@
 
 #include "emugbds/arm/Bus.h"
 #include "emugbds/inds/Cp15.h"
+#include "emugbds/inds/Io.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -51,14 +52,20 @@ public:
     bool HasSlot2Rom() const noexcept { return !slot2_rom_.empty(); }
     const std::vector<uint8_t>& nds_rom() const noexcept { return nds_rom_; }
 
-    // Clears RAM and TCM and restores power-on WRAMCNT and CP15; loaded images stay.
+    // Clears RAM and TCM and restores power-on I/O, WRAMCNT, and CP15; loaded images stay.
     void ResetMemory();
     // Shared WRAM split (0 = all ARM9 ... 3 = all ARM7), as set by WRAMCNT.
     uint8_t wramcnt() const noexcept { return wramcnt_; }
+    void set_wramcnt(uint8_t value) noexcept { wramcnt_ = static_cast<uint8_t>(value & 3u); }
+    // DMA accesses: same maps as the CPUs, but they cannot reach the ARM9's TCM.
+    uint32_t DmaRead(bool arm9, uint32_t address, uint32_t size) { return Read(arm9, address, size, false); }
+    void DmaWrite(bool arm9, uint32_t address, uint32_t value, uint32_t size) { Write(arm9, address, value, size, false); }
 
     // The ARM9's CP15 lives here because its TCM settings decide the ARM9 memory map.
     Cp15& cp15() noexcept { return cp15_; }
     const Cp15& cp15() const noexcept { return cp15_; }
+    Io& io() noexcept { return io_; }
+    const Io& io() const noexcept { return io_; }
     arm::IBus& arm9() noexcept { return arm9_view_; }
     arm::IBus& arm7() noexcept { return arm7_view_; }
     const AccessLog& arm9_unmapped() const noexcept { return arm9_unmapped_; }
@@ -80,13 +87,11 @@ private:
         bool arm9_;
     };
 
-    uint32_t Read(bool arm9, uint32_t address, uint32_t size) const;
-    void Write(bool arm9, uint32_t address, uint32_t value, uint32_t size);
+    uint32_t Read(bool arm9, uint32_t address, uint32_t size, bool use_tcm = true) const;
+    void Write(bool arm9, uint32_t address, uint32_t value, uint32_t size, bool use_tcm = true);
     // Backing storage for an address, or nullptr for I/O and unmapped space.
-    uint8_t* Arm9Pointer(uint32_t address, bool write);
+    uint8_t* Arm9Pointer(uint32_t address, bool write, bool use_tcm);
     uint8_t* Arm7Pointer(uint32_t address, bool write);
-    bool ReadIoByte(bool arm9, uint32_t address, uint8_t& value) const;
-    bool WriteIoByte(bool arm9, uint32_t address, uint8_t value);
 
     std::vector<uint8_t> bios7_;
     std::vector<uint8_t> bios9_;
@@ -100,6 +105,7 @@ private:
     std::vector<uint8_t> slot2_rom_;
     uint8_t wramcnt_ = 3u;
     Cp15 cp15_{};
+    Io io_{*this};
     View arm9_view_{*this, true};
     View arm7_view_{*this, false};
     mutable AccessLog arm9_unmapped_;
