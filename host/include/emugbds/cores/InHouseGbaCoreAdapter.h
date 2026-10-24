@@ -22,6 +22,7 @@ public:
     bool SetBiosPath(const std::filesystem::path& bios_path, std::string& error);
     void ApplyInputMasks(uint32_t press_mask, uint32_t release_mask) noexcept;
     bool GetVideoFrame(runtime::VideoFrame& out_frame) const noexcept;
+    bool GetAudioChunk(runtime::AudioChunk& out_chunk) const noexcept;
     uint16_t keyinput_state() const noexcept { return core_.keyinput_state(); }
     uint64_t unknown_arm_instruction_count() const noexcept { return core_.unknown_arm_instruction_count(); }
     const ingba::Core::UnsupportedArmStats& unsupported_arm_stats() const noexcept { return core_.unsupported_arm_stats(); }

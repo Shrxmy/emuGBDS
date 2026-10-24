@@ -32,6 +32,7 @@ main.cpp
 | `Swi.cpp` | BIOS/SWI behavior |
 | `MemoryBus.cpp` | address map, MMIO, timers, DMA, cartridge save device |
 | `Video.cpp` | LCD timing and video composition |
+| `Apu.cpp` | Direct Sound FIFOs and 32768 Hz stereo mixing (PSG channels not yet implemented) |
 | `*Constants.h` | focused internal constants/helpers; not public API |
 
 New behavior should be placed in the narrowest owning module. `Core.cpp` should

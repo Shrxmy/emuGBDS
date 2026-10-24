@@ -1,5 +1,6 @@
 #pragma once
 
+#include "emugbds/ingba/Apu.h"
 #include "emugbds/ingba/Bus.h"
 
 #include <array>
@@ -18,17 +19,27 @@ public:
     void ApplyKeyInputMasks(uint32_t press_mask, uint32_t release_mask) noexcept;
     uint16_t keyinput_state() const noexcept { return keyinput_state_; }
     void SetLcdStatus(uint16_t vcount, bool vblank, bool hblank, bool vcounter_match) noexcept;
-    void AdvanceTimers(uint32_t cycles) noexcept;
+    uint16_t PendingInterrupts() const noexcept;
+    void AdvanceTimers(uint32_t cycles);
+    uint32_t CyclesUntilTimerOverflow() const noexcept;
     bool ConsumeHaltRequest() noexcept {
         const bool requested = halt_requested_;
         halt_requested_ = false;
         return requested;
+    }
+    // True once after the VCOUNT compare target in DISPSTAT is written.
+    bool ConsumeVCountTargetWrite() noexcept {
+        const bool written = vcount_target_written_;
+        vcount_target_written_ = false;
+        return written;
     }
     void TriggerDmaTiming(uint32_t timing_code);
     void SetInterruptRequest(uint16_t flags) noexcept;
     void AcknowledgeInterruptFlags(uint16_t flags) noexcept;
     uint64_t dispcnt_write_count() const noexcept { return dispcnt_write_count_; }
     uint16_t last_dispcnt_written() const noexcept { return last_dispcnt_written_; }
+    Apu& apu() noexcept { return apu_; }
+    const Apu& apu() const noexcept { return apu_; }
 
     uint8_t Read8(uint32_t address) const override;
     uint16_t Read16(uint32_t address) const override;
@@ -38,14 +49,16 @@ public:
     void Write32(uint32_t address, uint32_t value) override;
 
 private:
-    void TryStartImmediateDma(uint32_t control_high_address);
+    void TryStartImmediateDma(uint32_t control_high_address, uint8_t previous_control_high);
     void ExecuteDmaTransfer(uint32_t channel, bool timed_trigger);
+    void RequestSoundDma(uint32_t fifo);
     uint16_t ReadIo16Direct(uint32_t address) const;
     uint32_t ReadIo32Direct(uint32_t address) const;
     void WriteIo16Direct(uint32_t address, uint16_t value);
     void WriteIo32Direct(uint32_t address, uint32_t value);
     static bool DecodeTimerCountAddress(uint32_t address, uint32_t& timer, bool& high_byte) noexcept;
     void IncrementTimer(uint32_t timer, uint32_t increments) noexcept;
+    const uint8_t* DirectReadPointer(uint32_t address, uint32_t size) const noexcept;
     uint8_t ReadFlash(uint32_t address) const noexcept;
     void WriteFlash(uint32_t address, uint8_t value) noexcept;
     void ResetFlashCommandState() noexcept;
@@ -87,10 +100,15 @@ private:
     uint64_t dispcnt_write_count_ = 0;
     uint16_t last_dispcnt_written_ = 0;
     bool halt_requested_ = false;
+    bool vcount_target_written_ = false;
     std::array<uint16_t, 4u> timer_reload_{};
     std::array<uint16_t, 4u> timer_counters_{};
     std::array<uint16_t, 4u> timer_control_{};
     std::array<uint32_t, 4u> timer_prescaler_phase_{};
+    std::array<uint32_t, 4u> dma_source_{};       // Internal DMA counters latched on enable.
+    std::array<uint32_t, 4u> dma_destination_{};
+    std::array<uint16_t, 4u> dma_count_{};
+    Apu apu_{};
 };
 
 } // namespace emugbds::ingba

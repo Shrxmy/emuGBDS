@@ -325,6 +325,25 @@ bool RunInteractive(
         return false;
     }
 
+    // Audio is optional: without a device the loop falls back to the frame timer.
+    SDL_AudioDeviceID audio_device = 0;
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO) == 0) {
+        SDL_AudioSpec want{};
+        want.freq = 32768;
+        want.format = AUDIO_S16SYS;
+        want.channels = 2;
+        want.samples = 512;
+        audio_device = SDL_OpenAudioDevice(nullptr, 0, &want, nullptr, 0); // SDL converts to the device format.
+        if (audio_device != 0) {
+            SDL_PauseAudioDevice(audio_device, 0);
+        }
+    }
+    if (audio_device == 0) {
+        std::cerr << "[audio] disabled: " << SDL_GetError() << "\n";
+    }
+    // About 60 ms of queued stereo int16 audio: enough to ride out frame jitter.
+    constexpr uint32_t kAudioQueueTargetBytes = 2048u * 2u * sizeof(int16_t);
+
     bool running = true;
     uint32_t held_mask = 0u;
     uint32_t previous_mask = 0u;
@@ -395,14 +414,36 @@ bool RunInteractive(
             SDL_RenderPresent(renderer);
         }
 
+        if (audio_device != 0 && output.audio.has_value()) {
+            if (SDL_GetQueuedAudioSize(audio_device) > kAudioQueueTargetBytes * 4u) {
+                // Uncapped runs or a stalled device outpace playback; drop instead of lagging.
+                SDL_ClearQueuedAudio(audio_device);
+            }
+            SDL_QueueAudio(audio_device, output.audio->samples,
+                static_cast<uint32_t>(output.audio->sample_count * sizeof(int16_t)));
+        }
+
         if (!options.uncapped) {
-            const auto elapsed = std::chrono::steady_clock::now() - frame_begin;
-            if (elapsed < frame_target) {
-                std::this_thread::sleep_for(frame_target - elapsed);
+            if (audio_device != 0 && output.audio.has_value()) {
+                // The GBA emits 32768 samples per emulated second, so draining to the target paces real time.
+                // The deadline keeps a stalled device from freezing input and video.
+                const auto deadline = frame_begin + frame_target * 2;
+                while (SDL_GetQueuedAudioSize(audio_device) > kAudioQueueTargetBytes &&
+                       std::chrono::steady_clock::now() < deadline) {
+                    SDL_Delay(1);
+                }
+            } else {
+                const auto elapsed = std::chrono::steady_clock::now() - frame_begin;
+                if (elapsed < frame_target) {
+                    std::this_thread::sleep_for(frame_target - elapsed);
+                }
             }
         }
     }
 
+    if (audio_device != 0) {
+        SDL_CloseAudioDevice(audio_device);
+    }
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

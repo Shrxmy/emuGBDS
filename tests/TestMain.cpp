@@ -410,6 +410,9 @@ void TestIngbaMemoryBus(TestContext& t) {
 
     bus.Write16(0x04000000u, 0x0403u);
     t.Expect(bus.Read16(0x04000000u) == 0x0403u, "ingba IO register write/read works");
+    bus.SetLcdStatus(0u, true, true, false);
+    bus.Write16(0x04000004u, 0x0028u);
+    t.Expect(bus.Read16(0x04000004u) == 0x002Bu, "ingba DISPSTAT write keeps read-only LCD status bits");
     bus.Write16(0x04000100u, 0xFFFEu);
     bus.Write16(0x04000102u, 0x00C0u);
     bus.AdvanceTimers(1u);
@@ -417,6 +420,13 @@ void TestIngbaMemoryBus(TestContext& t) {
     bus.AdvanceTimers(1u);
     t.Expect(bus.Read16(0x04000100u) == 0xFFFEu, "ingba timer reloads after overflow");
     t.Expect((bus.Read16(0x04000202u) & 0x0008u) != 0u, "ingba timer overflow requests its IRQ");
+    emugbds::ingba::MemoryBus timer_bus;
+    t.Expect(timer_bus.CyclesUntilTimerOverflow() == 0xFFFFFFFFu, "ingba stopped timers never overflow");
+    timer_bus.Write16(0x04000100u, 0xFFF0u);
+    timer_bus.Write16(0x04000102u, 0x0081u); // Enabled, prescaler 64.
+    t.Expect(timer_bus.CyclesUntilTimerOverflow() == 1024u, "ingba timer overflow bound covers the prescaler");
+    timer_bus.AdvanceTimers(24u);
+    t.Expect(timer_bus.CyclesUntilTimerOverflow() == 1000u, "ingba timer overflow bound includes prescaler phase");
     bus.Write8(0x04000301u, 0x00u);
     t.Expect(bus.ConsumeHaltRequest(), "ingba HALTCNT write requests a CPU halt");
     t.Expect(!bus.ConsumeHaltRequest(), "ingba HALTCNT request is consumed once");
@@ -750,6 +760,200 @@ void TestIngbaHaltWakesWithMaskedIrq(TestContext& t) {
     t.Expect((core.cpu().cpsr & 0x1Fu) == 0x1Fu, "masked IRQ wake leaves CPU in System mode");
     t.Expect(core.iflags() == 0x0001u, "masked VBlank request remains pending");
     t.Expect(core.IsRunning(), "HALT does not make the emulation core unavailable");
+}
+
+void TestIngbaApuFifoMixing(TestContext& t) {
+    emugbds::ingba::Apu apu;
+    constexpr uint16_t kAOnTimer0BOnTimer1 = 0x4304u; // A: 100%, left+right, timer 0. B: timer 1, muted.
+    apu.WriteFifo(0u, 0x40u);
+    t.Expect(apu.OnTimerOverflow(0u, kAOnTimer0BOnTimer1) == 0x1u, "ingba APU requests a FIFO A refill when low");
+    apu.Advance(512u, kAOnTimer0BOnTimer1, 0x0080u);
+    t.Expect(apu.samples().size() == 2u, "ingba APU emits one stereo sample per 512 cycles");
+    t.Expect(apu.samples()[0] == 64 * 4 * 64 && apu.samples()[1] == 64 * 4 * 64, "ingba APU scales a 100% FIFO sample");
+    apu.ClearSamples();
+    apu.Advance(512u, 0x4300u, 0x0080u);
+    t.Expect(apu.samples()[0] == 64 * 2 * 64, "ingba APU halves a 50% FIFO sample");
+    apu.ClearSamples();
+    apu.Advance(512u, kAOnTimer0BOnTimer1, 0x0000u);
+    t.Expect(apu.samples()[0] == 0, "ingba APU is silent when the master enable is off");
+    apu.ClearSamples();
+    apu.WriteFifo(0u, 0x7Fu);
+    apu.WriteFifo(1u, 0x7Fu);
+    apu.OnTimerOverflow(0u, 0x330Cu); // A and B on timer 0, both 100%, both sides.
+    apu.Advance(512u, 0x330Cu, 0x0080u);
+    t.Expect(apu.samples()[0] == 0x1FF * 64, "ingba APU clips the mixed output to the 10-bit range");
+}
+
+void TestIngbaSoundDmaRefillsFifo(TestContext& t) {
+    const auto dir = MakeTempRoot() / "ingba-sound-dma";
+    std::filesystem::create_directories(dir);
+    const auto gba_rom = dir / "sound_dma.gba";
+    WriteFile(gba_rom, BuildSyntheticGbaRom());
+
+    emugbds::ingba::MemoryBus bus;
+    std::string error;
+    t.Expect(bus.LoadRom(gba_rom, error), "ingba sound DMA bus loads ROM");
+    for (uint32_t i = 0u; i < 64u; ++i) {
+        bus.Write8(0x02000000u + i, static_cast<uint8_t>(i + 1u));
+    }
+    bus.Write32(0x040000BCu, 0x02000000u);   // DMA1 source.
+    bus.Write32(0x040000C0u, 0x040000A0u);   // DMA1 destination: FIFO A.
+    bus.Write16(0x040000C6u, 0xB600u);       // Enable, sound FIFO timing, repeat, 32-bit.
+    bus.Write16(0x04000084u, 0x0080u);       // Master sound enable.
+    bus.Write16(0x04000082u, 0x4304u);       // FIFO A on timer 0 at 100%, both sides.
+    bus.Write16(0x04000100u, 0xFFFFu);       // Timer 0 overflows every cycle.
+    bus.Write16(0x04000102u, 0x0080u);
+
+    const auto play_first_sample = [&]() {
+        bus.apu().ClearSamples();
+        bus.AdvanceTimers(1u);   // Empty FIFO asks for data.
+        bus.AdvanceTimers(1u);   // First byte plays; 15 left, so DMA refills again.
+        bus.AdvanceTimers(510u); // Sample point: output still holds the first byte.
+        return bus.apu().samples().empty() ? -1 : bus.apu().samples()[0];
+    };
+    t.Expect(play_first_sample() == 1 * 4 * 64, "ingba sound DMA feeds the FIFO and the sample holds its first byte");
+    t.Expect(bus.Read32(0x040000BCu) == 0x02000000u, "ingba DMA leaves the programmed source register unchanged");
+    t.Expect((bus.Read16(0x040000C6u) & 0x8000u) != 0u, "ingba sound DMA stays enabled in repeat mode");
+
+    // Sound engines restart their buffer by toggling enable without rewriting SAD.
+    bus.Write16(0x040000C6u, 0x3600u);
+    bus.Write16(0x04000082u, 0x4304u | 0x0800u); // Also reset FIFO A.
+    t.Expect(bus.Read16(0x04000082u) == 0x4304u, "ingba SOUNDCNT_H FIFO reset bit is not stored");
+    bus.Write16(0x040000C6u, 0xB600u);
+    t.Expect(play_first_sample() == 1 * 4 * 64, "ingba re-enabling sound DMA restarts from the programmed source");
+}
+
+void TestIngbaDmaLatchesCountOnEnable(TestContext& t) {
+    const auto dir = MakeTempRoot() / "ingba-dma-latch";
+    std::filesystem::create_directories(dir);
+    const auto gba_rom = dir / "dma_latch.gba";
+    WriteFile(gba_rom, BuildSyntheticGbaRom());
+
+    emugbds::ingba::MemoryBus bus;
+    std::string error;
+    t.Expect(bus.LoadRom(gba_rom, error), "ingba DMA latch bus loads ROM");
+    bus.Write32(0x02000000u, 0x11111111u);
+    bus.Write32(0x02000004u, 0x22222222u);
+    bus.Write32(0x040000D4u, 0x02000000u); // DMA3 source.
+    bus.Write32(0x040000D8u, 0x02000100u); // DMA3 destination.
+    bus.Write16(0x040000DCu, 1u);
+    bus.Write16(0x040000DEu, 0x9400u);     // Enable, VBlank timing, 32-bit.
+    bus.Write16(0x040000DCu, 2u);          // Rewritten while armed: must not affect this run.
+    bus.TriggerDmaTiming(0x1u);
+    t.Expect(bus.Read32(0x02000100u) == 0x11111111u, "ingba VBlank DMA copies its first unit");
+    t.Expect(bus.Read32(0x02000104u) == 0u, "ingba DMA uses the word count latched on enable");
+}
+
+void TestIngbaTimerWakesHaltPromptly(TestContext& t) {
+    const auto dir = MakeTempRoot() / "ingba-timer-halt";
+    std::filesystem::create_directories(dir);
+    const auto gba_rom = dir / "timer_halt.gba";
+
+    constexpr uint32_t kLiteralBase = 0x40u;
+    std::vector<uint8_t> rom = BuildSyntheticGbaRom();
+    auto write_ldr = [&](uint32_t address, uint32_t rd, uint32_t literal_address) {
+        WriteWordLe(rom, address, EncodeLdrLiteralAt(rd, address, literal_address));
+    };
+
+    write_ldr(0x00u, 1u, kLiteralBase + 0x00u);
+    WriteWordLe(rom, 0x04u, EncodeMovImm(0u, 8u));
+    WriteWordLe(rom, 0x08u, EncodeStrhImm(0u, 1u, 0u));       // IE = timer 0.
+    write_ldr(0x0Cu, 1u, kLiteralBase + 0x04u);
+    write_ldr(0x10u, 0u, kLiteralBase + 0x08u);
+    WriteWordLe(rom, 0x14u, EncodeStrReg(0u, 1u, 0u));        // Timer 0: reload 0xFFF0, IRQ, start.
+    WriteWordLe(rom, 0x18u, EncodeSwi(0x02u));                // HALT until the timer overflows.
+    write_ldr(0x1Cu, 2u, kLiteralBase + 0x0Cu);
+    WriteWordLe(rom, 0x20u, EncodeLdrhImm(3u, 2u, 0u));       // Sample DISPSTAT on wake.
+    WriteWordLe(rom, 0x24u, EncodeBranchRelativeWords(-2));
+
+    WriteWordLe(rom, kLiteralBase + 0x00u, 0x04000200u);
+    WriteWordLe(rom, kLiteralBase + 0x04u, 0x04000100u);
+    WriteWordLe(rom, kLiteralBase + 0x08u, 0x00C0FFF0u);
+    WriteWordLe(rom, kLiteralBase + 0x0Cu, 0x04000004u);
+    WriteFile(gba_rom, rom);
+
+    emugbds::ingba::Core core;
+    std::string error;
+    t.Expect(core.Initialize(error), "ingba timer HALT core initializes");
+    error.clear();
+    t.Expect(core.LoadRom(gba_rom, error), "ingba timer HALT core loads ROM");
+    error.clear();
+    t.Expect(core.RunFrame(error), "ingba timer HALT core runs frame");
+    t.Expect(core.cpu().r[15] == 0x08000024u, "ingba timer IRQ wakes HALT");
+    t.Expect((core.cpu().r[3] & 0x0002u) == 0u, "ingba timer IRQ wakes HALT before the line's HBlank");
+}
+
+void TestIngbaVCountTargetWriteMidLine(TestContext& t) {
+    const auto dir = MakeTempRoot() / "ingba-vcount-target";
+    std::filesystem::create_directories(dir);
+    const auto gba_rom = dir / "vcount_target.gba";
+
+    constexpr uint32_t kLiteralBase = 0x40u;
+    std::vector<uint8_t> rom = BuildSyntheticGbaRom();
+    auto write_ldr = [&](uint32_t address, uint32_t rd, uint32_t literal_address) {
+        WriteWordLe(rom, address, EncodeLdrLiteralAt(rd, address, literal_address));
+    };
+
+    write_ldr(0x00u, 1u, kLiteralBase + 0x00u);
+    write_ldr(0x04u, 0u, kLiteralBase + 0x04u);
+    WriteWordLe(rom, 0x08u, EncodeStrhImm(0u, 1u, 0u));       // DISPSTAT target = line 5.
+    WriteWordLe(rom, 0x0Cu, EncodeMovImm(0u, 0x20u));
+    WriteWordLe(rom, 0x10u, EncodeStrhImm(0u, 1u, 0u));       // Target = current line 0, VCount IRQ on.
+    write_ldr(0x14u, 2u, kLiteralBase + 0x08u);
+    WriteWordLe(rom, 0x18u, EncodeLdrhImm(3u, 2u, 0u));       // Sample IF right away.
+    WriteWordLe(rom, 0x1Cu, EncodeBranchRelativeWords(-2));
+
+    WriteWordLe(rom, kLiteralBase + 0x00u, 0x04000004u);
+    WriteWordLe(rom, kLiteralBase + 0x04u, 0x00000500u);
+    WriteWordLe(rom, kLiteralBase + 0x08u, 0x04000202u);
+    WriteFile(gba_rom, rom);
+
+    emugbds::ingba::Core core;
+    std::string error;
+    t.Expect(core.Initialize(error), "ingba VCOUNT target core initializes");
+    error.clear();
+    t.Expect(core.LoadRom(gba_rom, error), "ingba VCOUNT target core loads ROM");
+    error.clear();
+    t.Expect(core.RunFrame(error), "ingba VCOUNT target core runs frame");
+    t.Expect((core.cpu().r[3] & 0x0004u) != 0u, "ingba mid-line VCOUNT target write requests the VCount IRQ at once");
+}
+
+void TestIngbaBlendChangesPerScanline(TestContext& t) {
+    const auto dir = MakeTempRoot() / "ingba-blend-scanline";
+    std::filesystem::create_directories(dir);
+    const auto gba_rom = dir / "blend_scanline.gba";
+
+    auto encode_bne = [](int32_t relative_words) {
+        return (EncodeBranchRelativeWords(relative_words) & 0x0FFFFFFFu) | 0x10000000u;
+    };
+    std::vector<uint8_t> rom = BuildSyntheticGbaRom();
+    WriteWordLe(rom, 0x00u, EncodeLdrLiteralAt(1u, 0x00u, 0x40u));
+    WriteWordLe(rom, 0x04u, EncodeMovImm(0u, 0xA0u));
+    WriteWordLe(rom, 0x08u, EncodeStrhImm(0u, 1u, 0x50u));     // BLDCNT: brighten the backdrop.
+    WriteWordLe(rom, 0x0Cu, EncodeLdrhImm(2u, 1u, 0x06u));     // Wait for VCOUNT 80.
+    WriteWordLe(rom, 0x10u, EncodeSubImmSetFlags(3u, 2u, 80u));
+    WriteWordLe(rom, 0x14u, encode_bne(-4));
+    WriteWordLe(rom, 0x18u, EncodeMovImm(0u, 16u));
+    WriteWordLe(rom, 0x1Cu, EncodeStrhImm(0u, 1u, 0x54u));     // BLDY = 16 from here down.
+    WriteWordLe(rom, 0x20u, EncodeLdrhImm(2u, 1u, 0x06u));     // Wait for VBlank.
+    WriteWordLe(rom, 0x24u, EncodeSubImmSetFlags(3u, 2u, 160u));
+    WriteWordLe(rom, 0x28u, encode_bne(-4));
+    WriteWordLe(rom, 0x2Cu, EncodeMovImm(0u, 0u));
+    WriteWordLe(rom, 0x30u, EncodeStrhImm(0u, 1u, 0x54u));     // BLDY = 0 for the next frame's top.
+    WriteWordLe(rom, 0x34u, EncodeBranchRelativeWords(-12));
+    WriteWordLe(rom, 0x40u, 0x04000000u);
+    WriteFile(gba_rom, rom);
+
+    emugbds::ingba::Core core;
+    std::string error;
+    t.Expect(core.Initialize(error), "ingba scanline blend core initializes");
+    error.clear();
+    t.Expect(core.LoadRom(gba_rom, error), "ingba scanline blend core loads ROM");
+    error.clear();
+    t.Expect(core.RunFrame(error), "ingba scanline blend core runs frame");
+    const uint32_t* pixels = core.video_pixels();
+    t.Expect(pixels[10u * 240u + 5u] == 0xFF000000u, "ingba lines before the BLDY write keep the plain backdrop");
+    t.Expect(pixels[120u * 240u + 5u] == 0xFFFFFFFFu, "ingba lines after the BLDY write are brightened");
 }
 
 void TestIngbaIrqReturnsToThumb(TestContext& t) {
@@ -1180,6 +1384,111 @@ void TestIngbaThumbBlInterworking(TestContext& t) {
     t.Expect(core.RunFrame(error), "ingba thumb BL core runs frame");
     t.Expect(core.cpu().r[0] == 3u, "ingba thumb BL/BX interworking returns expected result");
     t.Expect(core.unsupported_arm_stats().thumb == 0u, "ingba thumb BL path has no unsupported thumb class");
+}
+
+void TestIngbaThumbBlSuffixUsesLr(TestContext& t) {
+    const auto dir = MakeTempRoot() / "ingba-thumb-bl-suffix";
+    std::filesystem::create_directories(dir);
+    const auto gba_rom = dir / "thumb_bl_suffix.gba";
+
+    std::vector<uint8_t> rom = BuildSyntheticGbaRom();
+    WriteWordLe(rom, 0x00u, EncodeLdrLiteralAt(0u, 0x00u, 0x20u));
+    WriteWordLe(rom, 0x04u, EncodeLdrLiteralAt(14u, 0x04u, 0x24u)); // LR holds a BL prefix result.
+    WriteWordLe(rom, 0x08u, EncodeArmBx(0u));
+    WriteWordLe(rom, 0x20u, 0x08000041u);
+    WriteWordLe(rom, 0x24u, 0x08000048u);
+
+    WriteLe16(rom, 0x40u, EncodeThumbMovImm(0, 1));
+    WriteLe16(rom, 0x42u, EncodeThumbBlSuffix(0x002u)); // target = LR + 4 = 0x4C
+    WriteLe16(rom, 0x44u, EncodeThumbBRelative(-2));
+    WriteLe16(rom, 0x4Cu, EncodeThumbAddImm(0, 2));
+    WriteLe16(rom, 0x4Eu, EncodeThumbBxReg(14));
+    WriteFile(gba_rom, rom);
+
+    emugbds::ingba::Core core;
+    std::string error;
+    t.Expect(core.Initialize(error), "ingba thumb BL suffix core initializes");
+    error.clear();
+    t.Expect(core.LoadRom(gba_rom, error), "ingba thumb BL suffix core loads ROM");
+    error.clear();
+    t.Expect(core.RunFrame(error), "ingba thumb BL suffix core runs frame");
+    t.Expect(core.cpu().r[0] == 3u, "ingba thumb BL suffix branches relative to LR");
+    t.Expect(core.cpu().r[14] == 0x08000045u, "ingba thumb BL suffix sets LR to the Thumb return address");
+    t.Expect(core.unsupported_arm_stats().thumb == 0u, "ingba thumb BL suffix alone is supported");
+}
+
+void TestIngbaThumbRegisterShiftByZero(TestContext& t) {
+    const auto dir = MakeTempRoot() / "ingba-thumb-shift-zero";
+    std::filesystem::create_directories(dir);
+    const auto gba_rom = dir / "thumb_shift_zero.gba";
+
+    std::vector<uint8_t> rom = BuildSyntheticGbaRom();
+    WriteWordLe(rom, 0x00u, EncodeLdrLiteralAt(0u, 0x00u, 0x20u));
+    WriteWordLe(rom, 0x04u, EncodeArmBx(0u));
+    WriteWordLe(rom, 0x20u, 0x08000041u);
+
+    WriteLe16(rom, 0x40u, EncodeThumbMovImm(0, 0x80));
+    WriteLe16(rom, 0x42u, EncodeThumbMovImm(1, 0));
+    WriteLe16(rom, 0x44u, EncodeThumbMovImm(2, 0x40));
+    WriteLe16(rom, 0x46u, 0x40C8u); // LSR r0, r1
+    WriteLe16(rom, 0x48u, 0x410Au); // ASR r2, r1
+    WriteLe16(rom, 0x4Au, EncodeThumbBRelative(-2));
+    WriteFile(gba_rom, rom);
+
+    emugbds::ingba::Core core;
+    std::string error;
+    t.Expect(core.Initialize(error), "ingba thumb shift-by-zero core initializes");
+    error.clear();
+    t.Expect(core.LoadRom(gba_rom, error), "ingba thumb shift-by-zero core loads ROM");
+    error.clear();
+    t.Expect(core.RunFrame(error), "ingba thumb shift-by-zero core runs frame");
+    t.Expect(core.cpu().r[0] == 0x80u, "ingba Thumb LSR by a zero register leaves the value unchanged");
+    t.Expect(core.cpu().r[2] == 0x40u, "ingba Thumb ASR by a zero register leaves the value unchanged");
+}
+
+void TestIngbaLoadRotationAndLdmBase(TestContext& t) {
+    const auto dir = MakeTempRoot() / "ingba-load-rotation";
+    std::filesystem::create_directories(dir);
+    const auto gba_rom = dir / "load_rotation.gba";
+
+    constexpr uint32_t kLiteralBase = 0x40u;
+    std::vector<uint8_t> rom = BuildSyntheticGbaRom();
+    auto write_ldr = [&](uint32_t address, uint32_t rd, uint32_t literal_address) {
+        WriteWordLe(rom, address, EncodeLdrLiteralAt(rd, address, literal_address));
+    };
+
+    write_ldr(0x00u, 1u, kLiteralBase + 0x00u);
+    write_ldr(0x04u, 2u, kLiteralBase + 0x04u);
+    WriteWordLe(rom, 0x08u, EncodeStrReg(2u, 1u, 0u));
+    write_ldr(0x0Cu, 2u, kLiteralBase + 0x08u);
+    WriteWordLe(rom, 0x10u, EncodeStrReg(2u, 1u, 4u));
+    WriteWordLe(rom, 0x14u, EncodeLdrReg(3u, 1u, 1u));            // Misaligned LDR.
+    write_ldr(0x18u, 5u, kLiteralBase + 0x00u);
+    WriteWordLe(rom, 0x1Cu, EncodeLdmiaWriteback(1u, 0x0003u));   // LDMIA r1!, {r0, r1}
+    write_ldr(0x20u, 7u, kLiteralBase + 0x0Cu);
+    WriteWordLe(rom, 0x24u, EncodeArmBx(7u));
+
+    WriteWordLe(rom, kLiteralBase + 0x00u, 0x03000000u);
+    WriteWordLe(rom, kLiteralBase + 0x04u, 0x11223344u);
+    WriteWordLe(rom, kLiteralBase + 0x08u, 0x0BADF00Du);
+    WriteWordLe(rom, kLiteralBase + 0x0Cu, 0x08000081u);
+
+    WriteLe16(rom, 0x80u, 0xCD60u); // Thumb LDMIA r5!, {r5, r6}
+    WriteLe16(rom, 0x82u, EncodeThumbBRelative(-2));
+    WriteFile(gba_rom, rom);
+
+    emugbds::ingba::Core core;
+    std::string error;
+    t.Expect(core.Initialize(error), "ingba load rotation core initializes");
+    error.clear();
+    t.Expect(core.LoadRom(gba_rom, error), "ingba load rotation core loads ROM");
+    error.clear();
+    t.Expect(core.RunFrame(error), "ingba load rotation core runs frame");
+    t.Expect(core.cpu().r[3] == 0x44112233u, "ingba misaligned LDR rotates the loaded word");
+    t.Expect(core.cpu().r[0] == 0x11223344u, "ingba LDM loads the first register");
+    t.Expect(core.cpu().r[1] == 0x0BADF00Du, "ingba LDM keeps a loaded base instead of writeback");
+    t.Expect(core.cpu().r[5] == 0x11223344u, "ingba Thumb LDMIA keeps a loaded base instead of writeback");
+    t.Expect(core.cpu().r[6] == 0x0BADF00Du, "ingba Thumb LDMIA loads the following register");
 }
 
 void TestIngbaVideoMode3Render(TestContext& t) {
@@ -1696,13 +2005,19 @@ int RunUnitTests() {
         void (*fn)(TestContext&);
     };
 
-    const std::array<NamedTest, 30> tests = {{
+    const std::array<NamedTest, 39> tests = {{
         {"ingba_memory_bus", &TestIngbaMemoryBus},
         {"ingba_core_run_frame", &TestIngbaCoreRunFrame},
         {"ingba_cpu_fiq_banking", &TestIngbaCpuFiqBanking},
         {"ingba_fiq_user_bank_transfers", &TestIngbaFiqUserBankTransfers},
         {"ingba_irq_wakes_halt", &TestIngbaIrqWakesHalt},
         {"ingba_halt_wakes_with_masked_irq", &TestIngbaHaltWakesWithMaskedIrq},
+        {"ingba_apu_fifo_mixing", &TestIngbaApuFifoMixing},
+        {"ingba_sound_dma_refills_fifo", &TestIngbaSoundDmaRefillsFifo},
+        {"ingba_dma_latches_count_on_enable", &TestIngbaDmaLatchesCountOnEnable},
+        {"ingba_timer_wakes_halt_promptly", &TestIngbaTimerWakesHaltPromptly},
+        {"ingba_vcount_target_write_mid_line", &TestIngbaVCountTargetWriteMidLine},
+        {"ingba_blend_changes_per_scanline", &TestIngbaBlendChangesPerScanline},
         {"ingba_irq_returns_to_thumb", &TestIngbaIrqReturnsToThumb},
         {"ingba_multiply_instruction", &TestIngbaMultiplyInstruction},
         {"ingba_block_transfer_instruction", &TestIngbaBlockTransferInstruction},
@@ -1716,6 +2031,9 @@ int RunUnitTests() {
         {"ingba_thumb_alu_and_branch", &TestIngbaThumbAluAndBranch},
         {"ingba_thumb_load_store", &TestIngbaThumbLoadStore},
         {"ingba_thumb_bl_interworking", &TestIngbaThumbBlInterworking},
+        {"ingba_thumb_bl_suffix_uses_lr", &TestIngbaThumbBlSuffixUsesLr},
+        {"ingba_load_rotation_and_ldm_base", &TestIngbaLoadRotationAndLdmBase},
+        {"ingba_thumb_register_shift_by_zero", &TestIngbaThumbRegisterShiftByZero},
         {"ingba_video_mode3_render", &TestIngbaVideoMode3Render},
         {"ingba_video_mode4_render", &TestIngbaVideoMode4Render},
         {"ingba_video_obj_render", &TestIngbaVideoObjRender},

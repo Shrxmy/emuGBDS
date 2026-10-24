@@ -3,8 +3,15 @@
 #include "emugbds/ingba/VideoConstants.h"
 
 #include <algorithm>
+#include <limits>
 
 namespace emugbds::ingba {
+namespace {
+
+// Timer prescalers 1/64/256/1024 as shifts; timers advance once per CPU step.
+constexpr std::array<uint32_t, 4u> kPrescalerShifts = {0u, 6u, 8u, 10u};
+
+} // namespace
 
 bool MemoryBus::LoadBios(const std::filesystem::path& bios_path, std::string& error) {
     std::vector<uint8_t> bios_image;
@@ -38,6 +45,7 @@ bool MemoryBus::LoadRom(const std::filesystem::path& rom_path, std::string& erro
     std::fill(flash_.begin(), flash_.end(), 0xFFu);
     flash_bank_ = 0u;
     ResetFlashCommandState();
+    apu_.Reset();
     if (ewram_.empty()) {
         ewram_.assign(kEwramSize, 0);
     }
@@ -78,6 +86,17 @@ void MemoryBus::SetLcdStatus(uint16_t vcount, bool vblank, bool hblank, bool vco
     io_[dispstat_hi] = static_cast<uint8_t>((dispstat >> 8u) & 0xFFu);
     io_[vcount_lo] = static_cast<uint8_t>(vcount & 0xFFu);
     io_[vcount_hi] = static_cast<uint8_t>((vcount >> 8u) & 0xFFu);
+}
+
+
+// IE & IF when IME allows delivery. The CPU polls this every step, so it reads the
+// plain IO storage that Read8 would return for these registers.
+uint16_t MemoryBus::PendingInterrupts() const noexcept {
+    if ((io_[kInterruptMasterEnableAddress - kIoBase] & 0x01u) == 0u) {
+        return 0u;
+    }
+    return static_cast<uint16_t>(
+        ReadIo16Direct(kInterruptEnableAddress) & ReadIo16Direct(kInterruptFlagAddress));
 }
 
 
@@ -158,6 +177,14 @@ void MemoryBus::IncrementTimer(uint32_t timer, uint32_t increments) noexcept {
         if ((timer_control_[timer] & 0x0040u) != 0u) {
             SetInterruptRequest(static_cast<uint16_t>(1u << (3u + timer)));
         }
+        if (timer < 2u) {
+            const uint32_t refill = apu_.OnTimerOverflow(timer, ReadIo16Direct(kSoundCntHAddress));
+            for (uint32_t fifo = 0u; fifo < 2u; ++fifo) {
+                if ((refill & (1u << fifo)) != 0u) {
+                    RequestSoundDma(fifo);
+                }
+            }
+        }
         if (timer + 1u < timer_counters_.size() &&
             (timer_control_[timer + 1u] & 0x0084u) == 0x0084u) {
             IncrementTimer(timer + 1u, 1u);
@@ -165,24 +192,42 @@ void MemoryBus::IncrementTimer(uint32_t timer, uint32_t increments) noexcept {
     }
 }
 
-void MemoryBus::AdvanceTimers(uint32_t cycles) noexcept {
+void MemoryBus::AdvanceTimers(uint32_t cycles) {
     if (cycles == 0u) {
         return;
     }
 
-    constexpr std::array<uint32_t, 4u> kPrescalers = {1u, 64u, 256u, 1024u};
+    // Sample before the timers move: callers never step past a timer overflow,
+    // so FIFO output levels are constant across these cycles.
+    apu_.Advance(cycles, ReadIo16Direct(kSoundCntHAddress), ReadIo16Direct(kSoundCntXAddress));
     for (uint32_t timer = 0u; timer < timer_counters_.size(); ++timer) {
         const uint16_t control = timer_control_[timer];
         if ((control & 0x0080u) == 0u || (control & 0x0004u) != 0u) {
             continue;
         }
 
-        const uint32_t prescaler = kPrescalers[control & 0x3u];
+        const uint32_t shift = kPrescalerShifts[control & 0x3u];
         const uint64_t accumulated = static_cast<uint64_t>(timer_prescaler_phase_[timer]) + cycles;
-        const uint32_t increments = static_cast<uint32_t>(accumulated / prescaler);
-        timer_prescaler_phase_[timer] = static_cast<uint32_t>(accumulated % prescaler);
+        const uint32_t increments = static_cast<uint32_t>(accumulated >> shift);
+        timer_prescaler_phase_[timer] = static_cast<uint32_t>(accumulated & ((1u << shift) - 1u));
         IncrementTimer(timer, increments);
     }
+}
+
+// Cascaded timers only tick when a lower timer overflows, so the earliest
+// prescaled overflow bounds every timer event, IRQ or not.
+uint32_t MemoryBus::CyclesUntilTimerOverflow() const noexcept {
+    uint32_t earliest = std::numeric_limits<uint32_t>::max();
+    for (uint32_t timer = 0u; timer < timer_counters_.size(); ++timer) {
+        const uint16_t control = timer_control_[timer];
+        if ((control & 0x0080u) == 0u || (control & 0x0004u) != 0u) {
+            continue;
+        }
+        const uint32_t ticks = 0x10000u - timer_counters_[timer];
+        const uint32_t cycles = (ticks << kPrescalerShifts[control & 0x3u]) - timer_prescaler_phase_[timer];
+        earliest = std::min(earliest, cycles);
+    }
+    return earliest;
 }
 
 uint8_t MemoryBus::ReadFlash(uint32_t address) const noexcept {
@@ -289,16 +334,21 @@ void MemoryBus::WriteFlash(uint32_t address, uint8_t value) noexcept {
     }
 }
 
-void MemoryBus::TryStartImmediateDma(uint32_t control_high_address) {
+void MemoryBus::TryStartImmediateDma(uint32_t control_high_address, uint8_t previous_control_high) {
     for (uint32_t channel = 0; channel < kDmaControlHighByteAddresses.size(); ++channel) {
         if (kDmaControlHighByteAddresses[channel] != control_high_address) {
             continue;
         }
-        const uint32_t control_address = kDmaBaseAddresses[channel] + 10u;
-        const uint16_t control = ReadIo16Direct(control_address);
-        if ((control & kDmaEnableBit) == 0u) {
-            return;
+        const uint32_t base = kDmaBaseAddresses[channel];
+        const uint16_t control = ReadIo16Direct(base + 10u);
+        if ((control & kDmaEnableBit) == 0u || (previous_control_high & 0x80u) != 0u) {
+            return; // Only an enable edge (0 -> 1) starts a channel.
         }
+        // The hardware copies SAD/DAD/CNT_L into internal counters and never writes them back,
+        // so sound engines can restart a buffer just by toggling the enable bit.
+        dma_source_[channel] = ReadIo32Direct(base + 0u);
+        dma_destination_[channel] = ReadIo32Direct(base + 4u);
+        dma_count_[channel] = ReadIo16Direct(base + 8u);
         if ((control & kDmaStartTimingMask) != 0u) {
             return;
         }
@@ -324,6 +374,21 @@ void MemoryBus::TriggerDmaTiming(uint32_t timing_code) {
 }
 
 
+// DMA1/DMA2 in "special" timing serve whichever FIFO their destination names.
+void MemoryBus::RequestSoundDma(uint32_t fifo) {
+    const uint32_t fifo_address = fifo == 0u ? kFifoAAddress : kFifoBAddress;
+    for (uint32_t channel = 1u; channel <= 2u; ++channel) {
+        const uint32_t base = kDmaBaseAddresses[channel];
+        const uint16_t control = ReadIo16Direct(base + 10u);
+        if ((control & kDmaEnableBit) != 0u && ((control >> 12u) & 0x3u) == 0x3u &&
+            dma_destination_[channel] == fifo_address) { // FIFO mode never moves the latched destination.
+            ExecuteDmaTransfer(channel, true);
+            return;
+        }
+    }
+}
+
+
 void MemoryBus::SetInterruptRequest(uint16_t flags) noexcept {
     const uint16_t current = ReadIo16Direct(kInterruptFlagAddress);
     WriteIo16Direct(kInterruptFlagAddress, static_cast<uint16_t>(current | flags));
@@ -341,17 +406,18 @@ void MemoryBus::ExecuteDmaTransfer(uint32_t channel, bool timed_trigger) {
     }
 
     const uint32_t base = kDmaBaseAddresses[channel];
-    const uint32_t initial_source = ReadIo32Direct(base + 0u);
-    const uint32_t initial_destination = ReadIo32Direct(base + 4u);
-    uint32_t source = initial_source;
-    uint32_t destination = initial_destination;
+    uint32_t source = dma_source_[channel];
+    uint32_t destination = dma_destination_[channel];
 
-    uint16_t count = ReadIo16Direct(base + 8u);
+    const uint16_t count = dma_count_[channel];
     uint16_t control = ReadIo16Direct(base + 10u);
 
-    const bool word_transfer = (control & kDmaTransfer32Bit) != 0u;
+    // Sound FIFO mode always moves 4 words to a fixed destination, ignoring count and width.
+    const bool fifo_mode = timed_trigger && (channel == 1u || channel == 2u) &&
+        ((control >> 12u) & 0x3u) == 0x3u;
+    const bool word_transfer = fifo_mode || (control & kDmaTransfer32Bit) != 0u;
     const uint32_t unit_size = word_transfer ? 4u : 2u;
-    uint32_t units = count;
+    uint32_t units = fifo_mode ? 4u : count;
     if (units == 0u) {
         units = (channel == 3u) ? 0x10000u : 0x4000u;
     }
@@ -379,7 +445,7 @@ void MemoryBus::ExecuteDmaTransfer(uint32_t channel, bool timed_trigger) {
     };
 
     const int32_t source_delta = compute_delta(source_control, true);
-    const int32_t destination_delta = compute_delta(destination_control, false);
+    const int32_t destination_delta = fifo_mode ? 0 : compute_delta(destination_control, false);
 
     for (uint32_t unit = 0u; unit < units; ++unit) {
         if (word_transfer) {
@@ -394,13 +460,13 @@ void MemoryBus::ExecuteDmaTransfer(uint32_t channel, bool timed_trigger) {
         destination = static_cast<uint32_t>(static_cast<int64_t>(destination) + destination_delta);
     }
 
-    WriteIo32Direct(base + 0u, source);
-    if (destination_reload && (control & kDmaRepeatBit) != 0u) {
-        WriteIo32Direct(base + 4u, initial_destination);
-    } else {
-        WriteIo32Direct(base + 4u, destination);
+    // Repeats reload CNT_L, and DAD only in increment/reload mode.
+    const bool repeat = (control & kDmaRepeatBit) != 0u;
+    dma_source_[channel] = source;
+    dma_destination_[channel] = (destination_reload && repeat) ? ReadIo32Direct(base + 4u) : destination;
+    if (repeat) {
+        dma_count_[channel] = ReadIo16Direct(base + 8u);
     }
-    WriteIo16Direct(base + 8u, count);
     if ((control & kDmaIrqBit) != 0u) {
         SetInterruptRequest(static_cast<uint16_t>(1u << (8u + channel)));
     }
@@ -415,6 +481,9 @@ void MemoryBus::ExecuteDmaTransfer(uint32_t channel, bool timed_trigger) {
 
 
 uint8_t MemoryBus::Read8(uint32_t address) const {
+    if (const uint8_t* bytes = DirectReadPointer(address, 1u)) {
+        return *bytes;
+    }
     if (address >= kBiosBase && address < kBiosBase + kBiosSize) {
         if (!bios_loaded_) {
             return 0;
@@ -489,7 +558,45 @@ uint8_t MemoryBus::Read8(uint32_t address) const {
 }
 
 
+// Side-effect-free regions are read in one go; the mirroring matches the byte-wise
+// path in Read8. BIOS, IO and save memory return nullptr and take that path.
+const uint8_t* MemoryBus::DirectReadPointer(uint32_t address, uint32_t size) const noexcept {
+    if ((address & (size - 1u)) != 0u) {
+        return nullptr; // Aligned accesses never straddle a mirror boundary.
+    }
+    const auto mirrored = [&](const std::vector<uint8_t>& bytes, uint32_t base) -> const uint8_t* {
+        if (bytes.empty()) {
+            return nullptr;
+        }
+        uint32_t offset = address - base;
+        if (offset >= bytes.size()) {
+            offset %= static_cast<uint32_t>(bytes.size()); // Only mirrored accesses pay for the division.
+        }
+        return offset + size <= bytes.size() ? bytes.data() + offset : nullptr;
+    };
+    switch (address >> 24u) {
+    case 0x02u:
+        return mirrored(ewram_, kEwramBase);
+    case 0x03u:
+        return mirrored(iwram_, kIwramBase);
+    case 0x05u:
+        return palette_.data() + ((address - kPaletteBase) % palette_.size());
+    case 0x06u:
+        return vram_.data() + NormalizeVramOffset(address);
+    case 0x07u:
+        return oam_.data() + ((address - kOamBase) % oam_.size());
+    case 0x08u: case 0x09u: case 0x0Au: case 0x0Bu: case 0x0Cu: case 0x0Du:
+        return mirrored(rom_, kRomBase);
+    default:
+        return nullptr;
+    }
+}
+
+
 uint16_t MemoryBus::Read16(uint32_t address) const {
+    if (const uint8_t* bytes = DirectReadPointer(address, 2u)) {
+        return static_cast<uint16_t>(bytes[0] | (bytes[1] << 8u));
+    }
     const uint16_t lo = Read8(address);
     const uint16_t hi = Read8(address + 1);
     return static_cast<uint16_t>(lo | (hi << 8));
@@ -497,6 +604,10 @@ uint16_t MemoryBus::Read16(uint32_t address) const {
 
 
 uint32_t MemoryBus::Read32(uint32_t address) const {
+    if (const uint8_t* bytes = DirectReadPointer(address, 4u)) {
+        return static_cast<uint32_t>(bytes[0]) | (static_cast<uint32_t>(bytes[1]) << 8u) |
+            (static_cast<uint32_t>(bytes[2]) << 16u) | (static_cast<uint32_t>(bytes[3]) << 24u);
+    }
     const uint32_t b0 = Read8(address);
     const uint32_t b1 = Read8(address + 1);
     const uint32_t b2 = Read8(address + 2);
@@ -570,12 +681,34 @@ void MemoryBus::Write8(uint32_t address, uint8_t value) {
             return;
         }
 
+        if (address >= kFifoAAddress && address < kFifoBAddress + 4u) {
+            apu_.WriteFifo((address - kFifoAAddress) / 4u, value);
+            return;
+        }
+        if (address == kSoundCntHAddress + 1u) {
+            // Bits 11 and 15 reset FIFO A/B and are not stored.
+            if ((value & 0x08u) != 0u) {
+                apu_.ResetFifo(0u);
+            }
+            if ((value & 0x80u) != 0u) {
+                apu_.ResetFifo(1u);
+            }
+            value = static_cast<uint8_t>(value & ~0x88u);
+        }
+        if (address == kDispStatAddress) {
+            // DISPSTAT bits 0-2 are LCD status flags owned by the video timing, not the CPU.
+            const uint8_t status_mask = kDispStatVBlank | kDispStatHBlank | kDispStatVCounter;
+            value = static_cast<uint8_t>((value & ~status_mask) | (io_[address - kIoBase] & status_mask));
+        } else if (address == kDispStatAddress + 1u) {
+            vcount_target_written_ = true;
+        }
+        const uint8_t previous = io_[address - kIoBase];
         io_[address - kIoBase] = value;
         if (address == kDispCntAddress || address == kDispCntAddress + 1u) {
             ++dispcnt_write_count_;
             last_dispcnt_written_ = ReadIo16Direct(kDispCntAddress);
         }
-        TryStartImmediateDma(address);
+        TryStartImmediateDma(address, previous);
         return;
     }
     if (address >= kPaletteBase && address < kPaletteBase + 0x01000000u) {

@@ -65,7 +65,7 @@ struct AudioChunk {
     uint32_t sample_rate = 0;
     uint32_t channels = 0;
     const int16_t* samples = nullptr;
-    size_t sample_count = 0;
+    size_t sample_count = 0; // Total int16 values; channels are interleaved.
 };
 
 struct OutputBundle {

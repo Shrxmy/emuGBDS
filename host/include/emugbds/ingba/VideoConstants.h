@@ -8,6 +8,7 @@ namespace emugbds::ingba {
 
 inline constexpr uint32_t kCyclesPerFrame = 280896u;
 inline constexpr uint32_t kCyclesPerScanline = 1232u;
+inline constexpr uint32_t kHBlankStartCycle = 1008u;
 inline constexpr uint32_t kVisibleScanlines = 160u;
 inline constexpr uint32_t kTotalScanlines = 228u;
 inline constexpr uint32_t kDispCntAddress = 0x04000000u;

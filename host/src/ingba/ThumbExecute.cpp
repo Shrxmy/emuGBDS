@@ -74,29 +74,21 @@ bool Core::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t f
     };
 
     if ((instruction & 0xF800u) == 0xF000u) {
+        // The BL prefix lives in LR, as on hardware, so it survives an IRQ between the halves.
         const int32_t upper = SignExtend(instruction & 0x07FFu, 11u) << 12u;
-        thumb_bl_prefix_base_ = static_cast<uint32_t>(static_cast<int32_t>(fetch_pc) + upper);
-        thumb_bl_prefix_pending_ = true;
+        cpu_.r[14] = static_cast<uint32_t>(static_cast<int32_t>(fetch_pc) + upper);
         cpu_.r[15] = next_pc;
         return true;
     }
 
     if ((instruction & 0xF800u) == 0xF800u) {
-        if (!thumb_bl_prefix_pending_) {
-            return HandleUnsupportedArm(UnsupportedArmClass::Thumb, next_pc, error);
-        }
         const uint32_t lower = (instruction & 0x07FFu) << 1u;
-        const uint32_t target = thumb_bl_prefix_base_ + lower;
+        const uint32_t target = cpu_.r[14] + lower;
         cpu_.r[14] = next_pc | 1u;
         const uint32_t old_pc = cpu_.r[15];
         cpu_.r[15] = target & ~1u;
-        thumb_bl_prefix_pending_ = false;
         RecordPcFlowEvent("THUMB.BL", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], frame_counter_);
         return true;
-    }
-
-    if (thumb_bl_prefix_pending_) {
-        thumb_bl_prefix_pending_ = false;
     }
 
     if ((instruction & 0xF800u) == 0x1800u) {
@@ -220,7 +212,8 @@ bool Core::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t f
         case 0x3: { // LSR
             bool carry_out = false;
             bool carry_valid = false;
-            result = logical_shift_right(lhs, rhs & 0xFFu, carry_out, carry_valid);
+            // A zero register amount is no shift; only the immediate form treats 0 as 32.
+            result = (rhs & 0xFFu) == 0u ? lhs : logical_shift_right(lhs, rhs & 0xFFu, carry_out, carry_valid);
             WriteThumbRegister(rd, result);
             SetNZFlags(result);
             if (carry_valid) {
@@ -231,7 +224,7 @@ bool Core::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t f
         case 0x4: { // ASR
             bool carry_out = false;
             bool carry_valid = false;
-            result = arithmetic_shift_right(lhs, rhs & 0xFFu, carry_out, carry_valid);
+            result = (rhs & 0xFFu) == 0u ? lhs : arithmetic_shift_right(lhs, rhs & 0xFFu, carry_out, carry_valid);
             WriteThumbRegister(rd, result);
             SetNZFlags(result);
             if (carry_valid) {
@@ -357,7 +350,6 @@ bool Core::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t f
             const bool next_thumb = (rhs & 1u) != 0u;
             SetThumbState(next_thumb);
             cpu_.r[15] = next_thumb ? (rhs & ~1u) : (rhs & ~3u);
-            thumb_bl_prefix_pending_ = false;
             RecordPcFlowEvent("THUMB.BX", pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], frame_counter_);
             return true;
         }
@@ -387,7 +379,9 @@ bool Core::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t f
             const bool load = (instruction & (1u << 11)) != 0u;
             const bool byte_transfer = (instruction & (1u << 10)) != 0u;
             if (load) {
-                const uint32_t value = byte_transfer ? bus_.Read8(address) : bus_.Read32(address & ~3u);
+                const uint32_t value = byte_transfer
+                    ? bus_.Read8(address)
+                    : Ror(bus_.Read32(address & ~3u), (address & 3u) * 8u);
                 WriteThumbRegister(rd, value);
             } else {
                 const uint32_t value = ReadThumbRegister(rd, fetch_pc);
@@ -440,7 +434,9 @@ bool Core::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t f
         const uint32_t address = ReadThumbRegister(rn, fetch_pc) + offset;
 
         if (load) {
-            const uint32_t value = byte_transfer ? bus_.Read8(address) : bus_.Read32(address & ~3u);
+            const uint32_t value = byte_transfer
+                ? bus_.Read8(address)
+                : Ror(bus_.Read32(address & ~3u), (address & 3u) * 8u);
             WriteThumbRegister(rd, value);
         } else {
             const uint32_t value = ReadThumbRegister(rd, fetch_pc);
@@ -478,7 +474,7 @@ bool Core::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t f
         const uint32_t imm8 = instruction & 0xFFu;
         const uint32_t address = cpu_.r[13] + (imm8 << 2u);
         if (load) {
-            WriteThumbRegister(rd, bus_.Read32(address & ~3u));
+            WriteThumbRegister(rd, Ror(bus_.Read32(address & ~3u), (address & 3u) * 8u));
         } else {
             bus_.Write32(address & ~3u, ReadThumbRegister(rd, fetch_pc));
         }
@@ -590,7 +586,9 @@ bool Core::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t f
             }
             address += 4u;
         }
-        cpu_.r[rn] += count * 4u;
+        if (!load || (reg_list & (1u << rn)) == 0u) {
+            cpu_.r[rn] += count * 4u; // A loaded base register wins over writeback.
+        }
         cpu_.r[15] = next_pc;
         return true;
     }

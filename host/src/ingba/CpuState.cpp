@@ -589,13 +589,7 @@ void Core::ServicePendingInterrupts() noexcept {
         return;
     }
 
-    const uint16_t ime = bus_.Read16(kInterruptMasterEnableAddress);
-    if ((ime & 0x0001u) == 0u) {
-        return;
-    }
-    const uint16_t ie = bus_.Read16(kInterruptEnableAddress);
-    const uint16_t iflags = bus_.Read16(kInterruptFlagAddress);
-    const uint16_t pending = static_cast<uint16_t>(ie & iflags);
+    const uint16_t pending = bus_.PendingInterrupts();
     if (pending == 0u) {
         return;
     }

@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace emugbds::ingba {
 
@@ -33,6 +34,8 @@ public:
     const uint32_t* video_pixels() const noexcept { return video_buffer_.data(); }
     uint32_t video_width() const noexcept { return kVideoWidth; }
     uint32_t video_height() const noexcept { return kVideoHeight; }
+    // Interleaved stereo samples at Apu::kSampleRate produced by the last RunFrame.
+    const std::vector<int16_t>& audio_samples() const noexcept { return bus_.apu().samples(); }
     uint16_t dispcnt() const noexcept;
     uint16_t dispstat() const noexcept;
     uint16_t vcount() const noexcept;
@@ -141,6 +144,9 @@ private:
         std::array<int16_t, 4u> affine_pd{};
         std::array<int32_t, 4u> reference_x{};
         std::array<int32_t, 4u> reference_y{};
+        uint16_t blend_control = 0;
+        uint16_t blend_alpha = 0;
+        uint16_t blend_y = 0;
     };
 
     std::array<uint32_t, kVideoPixelCount> video_buffer_{};
@@ -149,12 +155,10 @@ private:
     CpuState cpu_{};
     bool initialized_ = false;
     bool rom_loaded_ = false;
-    bool thumb_bl_prefix_pending_ = false;
     bool halted_ = false;
     bool in_vblank_ = false;
     bool in_hblank_ = false;
     bool in_vcounter_match_ = false;
-    uint32_t thumb_bl_prefix_base_ = 0;
     uint32_t lcd_cycle_in_frame_ = 0;
     uint64_t frame_counter_ = 0;
     uint64_t unknown_arm_instruction_count_ = 0;

@@ -70,7 +70,7 @@ void Core::AdvanceLcdTiming(uint32_t elapsed_cycles) noexcept {
     const uint16_t vcount = static_cast<uint16_t>((elapsed_cycles / kCyclesPerScanline) % kTotalScanlines);
     const uint32_t line_cycle = elapsed_cycles % kCyclesPerScanline;
     const bool vblank = vcount >= kVisibleScanlines;
-    const bool hblank = line_cycle >= 1008u;
+    const bool hblank = line_cycle >= kHBlankStartCycle;
     const uint16_t dispstat = bus_.Read16(kDispStatAddress);
     const uint16_t vcount_target = static_cast<uint16_t>((dispstat >> 8u) & 0x00FFu);
     const bool vcounter_match = vcount == vcount_target;
@@ -128,6 +128,9 @@ void Core::CaptureVideoScanlineState(uint16_t scanline) noexcept {
         state.reference_x[affine + 2u] = sign_extend_28(bus_.Read32(address + 8u));
         state.reference_y[affine + 2u] = sign_extend_28(bus_.Read32(address + 12u));
     }
+    state.blend_control = bus_.Read16(kBlendCntAddress);
+    state.blend_alpha = bus_.Read16(kBlendAlphaAddress);
+    state.blend_y = bus_.Read16(kBlendYAddress);
 }
 
 
@@ -634,22 +637,22 @@ void Core::UpdateVideoFrame() {
         }
     }
 
-    const uint16_t blend_control = bus_.Read16(kBlendCntAddress);
-    const uint16_t blend_alpha = bus_.Read16(kBlendAlphaAddress);
-    const uint16_t blend_y = bus_.Read16(kBlendYAddress);
-    const uint32_t blend_effect = (blend_control >> 6u) & 0x3u;
-    const uint32_t eva = std::min<uint32_t>(blend_alpha & 0x1Fu, 16u);
-    const uint32_t evb = std::min<uint32_t>((blend_alpha >> 8u) & 0x1Fu, 16u);
-    const uint32_t bldy = std::min<uint32_t>(blend_y & 0x1Fu, 16u);
-
-    auto target1_enabled = [&](uint8_t layer) {
-        return (blend_control & (1u << (layer == 4u ? 5u : layer))) != 0u;
-    };
-    auto target2_enabled = [&](uint8_t layer) {
-        return (blend_control & (1u << (8u + (layer == 4u ? 5u : layer)))) != 0u;
-    };
-
     for (uint32_t y = 0u; y < kVideoHeight; ++y) {
+        // Games retarget blending per scanline (HBlank IRQ/DMA), so use this line's registers.
+        const auto& line_state = video_scanline_states_[y];
+        const uint16_t blend_control = line_state.blend_control;
+        const uint32_t blend_effect = (blend_control >> 6u) & 0x3u;
+        const uint32_t eva = std::min<uint32_t>(line_state.blend_alpha & 0x1Fu, 16u);
+        const uint32_t evb = std::min<uint32_t>((line_state.blend_alpha >> 8u) & 0x1Fu, 16u);
+        const uint32_t bldy = std::min<uint32_t>(line_state.blend_y & 0x1Fu, 16u);
+
+        auto target1_enabled = [&](uint8_t layer) {
+            return (blend_control & (1u << (layer == 4u ? 5u : layer))) != 0u;
+        };
+        auto target2_enabled = [&](uint8_t layer) {
+            return (blend_control & (1u << (8u + (layer == 4u ? 5u : layer)))) != 0u;
+        };
+
         for (uint32_t x = 0u; x < kVideoWidth; ++x) {
             const size_t index = static_cast<size_t>(y) * kVideoWidth + x;
             uint32_t color = background_colors[index];

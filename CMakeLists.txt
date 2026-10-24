@@ -71,6 +71,7 @@ set(EMUGBDS_INHOUSE_GBA_SOURCES
     host/src/ingba/Swi.cpp
     host/src/ingba/CpuState.cpp
     host/src/ingba/Video.cpp
+    host/src/ingba/Apu.cpp
 )
 
 add_executable(emugbds

@@ -4,6 +4,8 @@
 #include "emugbds/ingba/MemoryConstants.h"
 #include "emugbds/ingba/VideoConstants.h"
 
+#include <algorithm>
+
 namespace emugbds::ingba {
 
 bool Core::Initialize(std::string& error) {
@@ -44,6 +46,7 @@ bool Core::RunFrame(std::string& error) {
     }
 
     uint32_t cycles = 0;
+    bus_.apu().ClearSamples();
     AdvanceLcdTiming(lcd_cycle_in_frame_);
     while (cycles < kCyclesPerFrame) {
         if (halted_) {
@@ -87,10 +90,25 @@ bool Core::RunFrame(std::string& error) {
             }
 #endif
         }
-        ++cycles;
-        bus_.AdvanceTimers(1u);
-        lcd_cycle_in_frame_ = (lcd_cycle_in_frame_ + 1u) % kCyclesPerFrame;
-        AdvanceLcdTiming(lcd_cycle_in_frame_);
+        uint32_t elapsed = 1u;
+        const bool wake_pending = halted_ &&
+            static_cast<uint16_t>(bus_.Read16(kInterruptEnableAddress) & bus_.Read16(kInterruptFlagAddress)) != 0u;
+        if (halted_ && !wake_pending) {
+            // Nothing can wake the CPU before the next LCD edge or timer overflow.
+            const uint32_t line_cycle = lcd_cycle_in_frame_ % kCyclesPerScanline;
+            const uint32_t to_edge = line_cycle < kHBlankStartCycle
+                ? kHBlankStartCycle - line_cycle
+                : kCyclesPerScanline - line_cycle;
+            elapsed = std::min({to_edge, bus_.CyclesUntilTimerOverflow(), kCyclesPerFrame - cycles});
+        }
+        cycles += elapsed;
+        bus_.AdvanceTimers(elapsed);
+        lcd_cycle_in_frame_ = (lcd_cycle_in_frame_ + elapsed) % kCyclesPerFrame;
+        // LCD state changes at line start and HBlank start; a new VCOUNT target is compared at once.
+        const uint32_t line_cycle = lcd_cycle_in_frame_ % kCyclesPerScanline;
+        if (line_cycle == 0u || line_cycle == kHBlankStartCycle || bus_.ConsumeVCountTargetWrite()) {
+            AdvanceLcdTiming(lcd_cycle_in_frame_);
+        }
     }
 
     UpdateVideoFrame();
@@ -105,8 +123,6 @@ bool Core::Reset(std::string& error) {
     cpu_.cpsr = 0x000000D3u;
     cpu_.thumb = false;
     cpu_.r[15] = bus_.HasBios() ? kBiosBase : kRomBase;
-    thumb_bl_prefix_pending_ = false;
-    thumb_bl_prefix_base_ = 0;
     unknown_arm_instruction_count_ = 0;
     unsupported_arm_stats_ = {};
     last_unsupported_swi_ = 0u;
@@ -192,7 +208,6 @@ bool Core::StepArm(std::string& error) {
         const uint32_t fetch_pc = pc + 4u;
         return ExecuteThumbInstruction(instruction, pc, fetch_pc, error);
     }
-    thumb_bl_prefix_pending_ = false;
 
     const uint32_t pc = cpu_.r[15];
     const uint32_t fetch_pc = pc + 8;

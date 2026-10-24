@@ -288,7 +288,7 @@ bool Core::ExecuteArmSingleDataTransfer(
         if (byte_transfer) {
             value = bus_.Read8(address);
         } else {
-            value = bus_.Read32(address & ~3u);
+            value = Ror(bus_.Read32(address & ~3u), (address & 3u) * 8u); // Misaligned LDR rotates.
         }
 
         const uint32_t old_pc = cpu_.r[15];
@@ -541,7 +541,8 @@ bool Core::ExecuteArmBlockDataTransfer(
         address += 4u;
     }
 
-    if (write_back) {
+    // A loaded base register wins over writeback.
+    if (write_back && !(load && (reg_list & (1u << rn)) != 0u)) {
         WriteArmRegister(rn, updated_base);
     }
 

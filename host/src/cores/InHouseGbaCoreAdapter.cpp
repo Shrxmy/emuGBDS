@@ -88,4 +88,15 @@ bool InHouseGbaCoreAdapter::GetVideoFrame(runtime::VideoFrame& out_frame) const 
     return out_frame.pixels != nullptr;
 }
 
+bool InHouseGbaCoreAdapter::GetAudioChunk(runtime::AudioChunk& out_chunk) const noexcept {
+    if (!initialized_ || !loaded_ || !core_.IsRunning() || core_.audio_samples().empty()) {
+        return false;
+    }
+    out_chunk.sample_rate = ingba::Apu::kSampleRate;
+    out_chunk.channels = 2u;
+    out_chunk.samples = core_.audio_samples().data();
+    out_chunk.sample_count = core_.audio_samples().size();
+    return true;
+}
+
 } // namespace emugbds::cores
