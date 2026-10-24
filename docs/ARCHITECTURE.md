@@ -19,7 +19,7 @@ main.cpp
 - `host/src/arm/`: shared ARM CPU interpreter, used by the GBA core and
   intended for the DS ARM7/ARM9.
 - `host/src/ingba/`: GBA implementation.
-- `host/src/inds/`: DS implementation and current bring-up scaffold.
+- `host/src/inds/`: DS implementation in bring-up (dual CPUs, memory map, CP15).
 - `host/src/boot/`, `host/src/gba/`, and `host/src/nds/`: boot policy and
   cartridge metadata, independent of CPU execution.
 
@@ -58,11 +58,23 @@ decoding is unaffected.
 New behavior should be placed in the narrowest owning module. `Core.cpp` should
 coordinate modules rather than grow new device implementations.
 
+## In-house DS module boundaries
+
+| Module | Owns |
+| --- | --- |
+| `Core.cpp` | ARM9/ARM7 `ArmCpu` instances and their hosts (BIOS SWI vectors, CP15), the 2:1 scheduler, direct boot |
+| `MemoryBus.cpp` | ARM9/ARM7 bus views, RAM/TCM/WRAM mapping, I/O, the unmapped-access log |
+| `Cp15.cpp` | ARM9 CP15: ID and control registers, TCM regions, wait for interrupt |
+
+The ARM9's CP15 is owned by the memory object because its TCM settings decide
+the ARM9 memory map. A loaded cartridge is always direct-booted; the firmware
+menu is not emulated.
+
 ## Build ownership
 
-`EMUGBDS_ARM_CPU_SOURCES` and `EMUGBDS_INHOUSE_GBA_SOURCES` (which includes
-the CPU list) in the root `CMakeLists.txt` are the single source of truth for
-CPU and GBA implementation units. Both the application and unit-test
+`EMUGBDS_ARM_CPU_SOURCES`, `EMUGBDS_INHOUSE_GBA_SOURCES`, and
+`EMUGBDS_INHOUSE_DS_SOURCES` in the root `CMakeLists.txt` are the single source
+of truth for CPU, GBA, and DS implementation units. Both the application and unit-test
 executables consume that list to prevent source drift.
 
 ## Workspace policy

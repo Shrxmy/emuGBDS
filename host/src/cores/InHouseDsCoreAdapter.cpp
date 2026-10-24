@@ -48,7 +48,9 @@ bool InHouseDsCoreAdapter::Initialize(std::string& error) {
         return true;
     }
 
-    if (!core_.Configure(
+    // Each session starts from a fresh core; allocating here keeps failures reportable.
+    core_ = std::make_unique<inds::Core>();
+    if (!core_->Configure(
             nds_bios7_path_,
             nds_bios9_path_,
             nds_firmware_path_,
@@ -57,10 +59,10 @@ bool InHouseDsCoreAdapter::Initialize(std::string& error) {
             error)) {
         return false;
     }
-    if (!core_.Initialize(error)) {
+    if (!core_->Initialize(error)) {
         return false;
     }
-    if (slot2_rom_path_.has_value() && !core_.LoadSlot2Rom(*slot2_rom_path_, error)) {
+    if (slot2_rom_path_.has_value() && !core_->LoadSlot2Rom(*slot2_rom_path_, error)) {
         return false;
     }
 
@@ -76,10 +78,10 @@ bool InHouseDsCoreAdapter::LoadPrimaryRom(const std::filesystem::path& rom_path,
         error = "NDS ROM does not exist: " + rom_path.string();
         return false;
     }
-    if (slot2_rom_path_.has_value() && !core_.LoadSlot2Rom(*slot2_rom_path_, error)) {
+    if (slot2_rom_path_.has_value() && !core_->LoadSlot2Rom(*slot2_rom_path_, error)) {
         return false;
     }
-    if (!core_.LoadPrimaryRom(rom_path, error)) {
+    if (!core_->LoadPrimaryRom(rom_path, error)) {
         return false;
     }
 
@@ -92,7 +94,7 @@ bool InHouseDsCoreAdapter::RunFrame(std::string& error) {
         error = "In-house DS core is not ready to run";
         return false;
     }
-    return core_.RunFrame(error);
+    return core_->RunFrame(error);
 }
 
 bool InHouseDsCoreAdapter::Reset(std::string& error) {
@@ -100,15 +102,14 @@ bool InHouseDsCoreAdapter::Reset(std::string& error) {
         error = "In-house DS core is not initialized";
         return false;
     }
-    return core_.Reset(error);
+    return core_->Reset(error);
 }
 
 bool InHouseDsCoreAdapter::IsRunning() const noexcept {
-    return initialized_ && primary_loaded_ && core_.IsRunning();
+    return initialized_ && primary_loaded_ && core_->IsRunning();
 }
 
 void InHouseDsCoreAdapter::Shutdown() noexcept {
-    core_ = {};
     configured_ = false;
     initialized_ = false;
     primary_loaded_ = false;
@@ -128,13 +129,13 @@ bool InHouseDsCoreAdapter::SetSecondaryRom(const std::filesystem::path& rom_path
 
     slot2_rom_path_ = rom_path;
     if (initialized_) {
-        return core_.LoadSlot2Rom(*slot2_rom_path_, error);
+        return core_->LoadSlot2Rom(*slot2_rom_path_, error);
     }
     return true;
 }
 
 std::optional<core::TransitionEvent> InHouseDsCoreAdapter::PollTransition() {
-    return core_.PollTransition();
+    return core_->PollTransition();
 }
 
 } // namespace emugbds::cores

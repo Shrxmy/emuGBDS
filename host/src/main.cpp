@@ -4,14 +4,18 @@
 #include "emugbds/input/GbaKeys.h"
 #include "emugbds/runtime/RuntimeKernel.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <string>
 #include <thread>
+#include <utility>
+#include <vector>
 
 #if EMUGBDS_HAS_SDL2
 #define SDL_MAIN_HANDLED
@@ -452,6 +456,37 @@ bool RunInteractive(
 #endif
 }
 
+// Per-CPU state plus the most-hit unemulated I/O ports and memory blocks: what the DS game needs next.
+void PrintDsBringUpReport(const emugbds::inds::Core& core) {
+    const auto print_top = [](const char* kind, const std::map<uint32_t, uint64_t>& counts) {
+        std::vector<std::pair<uint64_t, uint32_t>> ranked;
+        for (const auto& [address, count] : counts) {
+            ranked.emplace_back(count, address);
+        }
+        std::sort(ranked.rbegin(), ranked.rend());
+        std::cout << "  unmapped " << kind << " (" << counts.size() << " addresses):";
+        for (size_t i = 0; i < std::min<size_t>(10u, ranked.size()); ++i) {
+            std::cout << " 0x" << std::hex << std::setw(8) << std::setfill('0') << ranked[i].second
+                      << std::dec << " x" << ranked[i].first;
+        }
+        std::cout << "\n";
+    };
+    const auto print_cpu = [&](const char* name, const emugbds::arm::ArmCpu& cpu, const emugbds::inds::AccessLog& log) {
+        const auto& state = cpu.state();
+        const auto& stats = cpu.unsupported_arm_stats();
+        std::cout << "DS " << name << ": PC=0x" << std::hex << std::setw(8) << std::setfill('0') << state.r[15]
+                  << " CPSR=0x" << std::setw(8) << state.cpsr << std::dec
+                  << " unsupported total=" << cpu.unknown_arm_instruction_count()
+                  << " (generic=" << stats.generic << " thumb=" << stats.thumb << " multiply=" << stats.multiply
+                  << " block=" << stats.block_transfer << " swi=" << stats.software_interrupt << ")\n";
+        print_top("reads", log.reads);
+        print_top("writes", log.writes);
+    };
+    print_cpu("ARM9", core.arm9_cpu(), core.memory().arm9_unmapped());
+    std::cout << "  ARM9 halted (CP15 wait for interrupt): " << (core.arm9_halted() ? "yes" : "no") << "\n";
+    print_cpu("ARM7", core.arm7_cpu(), core.memory().arm7_unmapped());
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -475,7 +510,9 @@ int main(int argc, char** argv) {
     std::unique_ptr<emugbds::core::IEmuCore> gba_core;
     emugbds::cores::InHouseGbaCoreAdapter* gba_inhouse_raw = nullptr;
 
-    ds_core = std::make_unique<emugbds::cores::InHouseDsCoreAdapter>();
+    auto inhouse_ds = std::make_unique<emugbds::cores::InHouseDsCoreAdapter>();
+    const emugbds::cores::InHouseDsCoreAdapter* ds_inhouse_raw = inhouse_ds.get();
+    ds_core = std::move(inhouse_ds);
 
     (void)options.gba_backend;
     auto inhouse_gba = std::make_unique<emugbds::cores::InHouseGbaCoreAdapter>();
@@ -515,7 +552,10 @@ int main(int argc, char** argv) {
 
     std::cout << "Completed " << executed_frames << " frame(s) in mode "
               << (kernel.active_mode() == emugbds::core::EmuMode::DS ? "DS" : "GBA") << ".\n";
-    if (options.debug_stats && gba_inhouse_raw != nullptr) {
+    if (options.debug_stats && kernel.active_mode() == emugbds::core::EmuMode::DS) {
+        PrintDsBringUpReport(ds_inhouse_raw->core());
+    }
+    if (options.debug_stats && gba_inhouse_raw != nullptr && kernel.active_mode() == emugbds::core::EmuMode::GBA) {
         const auto& stats = gba_inhouse_raw->unsupported_arm_stats();
         std::cout << "GBA unsupported stats: total=" << gba_inhouse_raw->unknown_arm_instruction_count()
                   << " generic=" << stats.generic

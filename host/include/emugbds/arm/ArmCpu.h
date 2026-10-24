@@ -60,6 +60,8 @@ public:
     const UnsupportedArmStats& unsupported_arm_stats() const noexcept { return unsupported_arm_stats_; }
     // Frame number stamped on debug trace events.
     void set_trace_frame(uint64_t frame) noexcept { trace_frame_ = frame; }
+    // ARMv5 only: false restores ARMv4 loads into PC (the ARM946 CP15 control bit 15).
+    void set_load_interworking(bool enabled) noexcept { load_interworking_ = enabled; }
 
     void SetThumbState(bool enabled) noexcept;
     void WriteCpsr(uint32_t value) noexcept;
@@ -140,6 +142,7 @@ private:
     IBus& bus_;
     ICpuHost& host_;
     bool v5_ = false;
+    bool load_interworking_ = true;
     CpuState cpu_{};
     uint64_t trace_frame_ = 0;
     uint64_t unknown_arm_instruction_count_ = 0;

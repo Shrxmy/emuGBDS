@@ -769,7 +769,7 @@ bool ArmCpu::ExecuteArmV5Instruction(uint32_t instruction, uint32_t fetch_pc, ui
 
 
 void ArmCpu::LoadPcInterworking(uint32_t value) {
-    if (v5_) {
+    if (v5_ && load_interworking_) {
         const bool thumb = (value & 1u) != 0u;
         SetThumbState(thumb);
         cpu_.r[15] = thumb ? (value & ~1u) : (value & ~3u);

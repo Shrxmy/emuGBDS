@@ -1,160 +1,80 @@
 #include "emugbds/inds/Core.h"
 
-#include <cstddef>
-#include <cstdint>
-#include <fstream>
+#include "emugbds/arm/CpuConstants.h"
+
+#include <algorithm>
+#include <cstring>
 #include <iostream>
-#include <iterator>
 #include <utility>
-#include <vector>
 
 namespace emugbds::inds {
 namespace {
 
-constexpr uint32_t kArm9CyclesPerFrame = 560190u;
-constexpr uint32_t kArm7CyclesPerFrame = 280095u;
-constexpr uint32_t kArmInstructionsPerCycle = 1u;
 constexpr uint64_t kFirmwareSlot2TransitionFrames = 2u;
+// One frame is 263 lines x 355 dots x 6 cycles of the 33.51 MHz ARM7 clock;
+// the ARM9 runs at twice that rate.
+constexpr uint32_t kArm7CyclesPerFrame = 560190u;
+constexpr uint32_t kSliceCycles = 32u;
 
-constexpr uint32_t kMainRamBase = 0x02000000u;
-constexpr uint32_t kMainRamSize = 0x00400000u;
-constexpr uint32_t kSharedWramBase = 0x03000000u;
-constexpr uint32_t kSharedWramSize = 0x00010000u;
-constexpr uint32_t kSlot2Base = 0x08000000u;
-constexpr uint32_t kArm9BiosBase = 0xFFFF0000u;
-constexpr uint32_t kArm7BiosBase = 0x00000000u;
+constexpr uint32_t kHeaderCopyAddress = 0x027FFE00u;
+constexpr uint32_t kHeaderCopySize = 0x170u;
+constexpr uint32_t kSecureAreaOffset = 0x4000u;
+constexpr uint32_t kDestroyedSecureAreaId = 0xE7FFDEFFu;
+constexpr uint32_t kBootDtcmBase = 0x027C0000u; // Above the 32 MiB ITCM window, below the header copy.
 
-bool LoadWholeFile(const std::filesystem::path& path, std::vector<uint8_t>& out_bytes, std::string& error) {
-    std::ifstream input(path, std::ios::binary);
-    if (!input.is_open()) {
-        error = "Failed to open file: " + path.string();
-        return false;
-    }
+constexpr uint32_t kCpsrSvc = 0xD3u; // IRQ/FIQ disabled, ARM state
+constexpr uint32_t kCpsrIrq = 0xD2u;
+constexpr uint32_t kCpsrSys = 0xDFu;
 
-    out_bytes.assign(
-        std::istreambuf_iterator<char>(input),
-        std::istreambuf_iterator<char>());
-    if (out_bytes.empty()) {
-        error = "File is empty: " + path.string();
-        return false;
-    }
-    return true;
-}
+struct BootStacks {
+    uint32_t svc;
+    uint32_t irq;
+    uint32_t sys;
+};
 
-uint8_t ReadFromSpan(const std::vector<uint8_t>& bytes, uint32_t base, uint32_t address) {
-    if (bytes.empty() || address < base) {
-        return 0;
-    }
-    const uint32_t offset = address - base;
-    if (offset >= bytes.size()) {
-        return 0;
-    }
-    return bytes[offset];
-}
-
-void WriteToSpan(std::vector<uint8_t>& bytes, uint32_t base, uint32_t address, uint8_t value) {
-    if (bytes.empty() || address < base) {
-        return;
-    }
-    const uint32_t offset = address - base;
-    if (offset >= bytes.size()) {
-        return;
-    }
-    bytes[offset] = value;
+// Enters `entry` in System mode with the banked stacks the firmware leaves behind.
+void StartCpu(arm::ArmCpu& cpu, uint32_t entry, const BootStacks& stacks) {
+    cpu.WriteCpsr(kCpsrSvc);
+    cpu.state().r[13] = stacks.svc;
+    cpu.WriteCpsr(kCpsrIrq);
+    cpu.state().r[13] = stacks.irq;
+    cpu.WriteCpsr(kCpsrSys);
+    cpu.state().r[13] = stacks.sys;
+    cpu.state().r[15] = entry & ~3u;
 }
 
 } // namespace
 
-bool MemoryBus::LoadBios7(const std::filesystem::path& bios_path, std::string& error) {
-    return LoadWholeFile(bios_path, bios7_, error);
-}
-
-bool MemoryBus::LoadBios9(const std::filesystem::path& bios_path, std::string& error) {
-    return LoadWholeFile(bios_path, bios9_, error);
-}
-
-bool MemoryBus::LoadFirmware(const std::filesystem::path& firmware_path, std::string& error) {
-    return LoadWholeFile(firmware_path, firmware_, error);
-}
-
-bool MemoryBus::LoadNdsRom(const std::filesystem::path& rom_path, std::string& error) {
-    return LoadWholeFile(rom_path, nds_rom_, error);
-}
-
-bool MemoryBus::LoadSlot2Rom(const std::filesystem::path& rom_path, std::string& error) {
-    return LoadWholeFile(rom_path, slot2_rom_, error);
-}
-
-void MemoryBus::ClearNdsRom() {
-    nds_rom_.clear();
-}
-
-void MemoryBus::ClearSlot2Rom() {
-    slot2_rom_.clear();
-}
-
-uint8_t MemoryBus::Read8(uint32_t address) const {
-    if (address >= kMainRamBase && address < kMainRamBase + kMainRamSize) {
-        return ReadFromSpan(main_ram_, kMainRamBase, address);
+bool Core::CpuHost::OnSoftwareInterrupt(uint8_t swi_imm, uint32_t next_pc, bool from_thumb, std::string& error) {
+    (void)swi_imm;
+    (void)from_thumb;
+    (void)error;
+    if (arm9_ ? !core_.bus_.HasBios9() : !core_.bus_.HasBios7()) {
+        return false; // No BIOS emulation yet: SWIs need the BIOS images.
     }
-    if (address >= kSharedWramBase && address < kSharedWramBase + kSharedWramSize) {
-        return ReadFromSpan(shared_wram_, kSharedWramBase, address);
-    }
-    if (address >= kArm9BiosBase && !bios9_.empty()) {
-        const uint32_t offset = (address - kArm9BiosBase) % static_cast<uint32_t>(bios9_.size());
-        return bios9_[offset];
-    }
-    if (address < static_cast<uint32_t>(bios7_.size()) && !bios7_.empty()) {
-        return bios7_[address];
-    }
-    if (address >= kSlot2Base && !slot2_rom_.empty()) {
-        const uint32_t offset = (address - kSlot2Base) % static_cast<uint32_t>(slot2_rom_.size());
-        return slot2_rom_[offset];
-    }
-    return 0;
+    // A Thumb SWI leaves LR at the next instruction; the BIOS reads the SWI number from [LR-2].
+    const uint32_t vector_base = arm9_ ? core_.bus_.cp15().exception_base() : 0u;
+    (arm9_ ? core_.arm9_ : core_.arm7_)
+        .EnterException(arm::kCpuModeSupervisor, vector_base + arm::kSwiVectorAddress, false, next_pc, true);
+    return true;
 }
 
-uint16_t MemoryBus::Read16(uint32_t address) const {
-    const uint16_t lo = Read8(address);
-    const uint16_t hi = Read8(address + 1);
-    return static_cast<uint16_t>(lo | (hi << 8));
+
+bool Core::CpuHost::OnCoprocessorRead(uint32_t coprocessor, uint32_t opcode1, uint32_t crn, uint32_t crm,
+                                      uint32_t opcode2, uint32_t& value) {
+    return arm9_ && coprocessor == 15u && core_.bus_.cp15().Read(opcode1, crn, crm, opcode2, value);
 }
 
-uint32_t MemoryBus::Read32(uint32_t address) const {
-    const uint32_t b0 = Read8(address);
-    const uint32_t b1 = Read8(address + 1);
-    const uint32_t b2 = Read8(address + 2);
-    const uint32_t b3 = Read8(address + 3);
-    return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+
+bool Core::CpuHost::OnCoprocessorWrite(uint32_t coprocessor, uint32_t opcode1, uint32_t crn, uint32_t crm,
+                                       uint32_t opcode2, uint32_t value) {
+    if (!arm9_ || coprocessor != 15u || !core_.bus_.cp15().Write(opcode1, crn, crm, opcode2, value)) {
+        return false;
+    }
+    core_.arm9_.set_load_interworking(core_.bus_.cp15().load_interworking());
+    return true;
 }
 
-void MemoryBus::Write8(uint32_t address, uint8_t value) {
-    if (main_ram_.empty()) {
-        main_ram_.assign(kMainRamSize, 0);
-    }
-    if (shared_wram_.empty()) {
-        shared_wram_.assign(kSharedWramSize, 0);
-    }
-    if (address >= kMainRamBase && address < kMainRamBase + kMainRamSize) {
-        WriteToSpan(main_ram_, kMainRamBase, address, value);
-        return;
-    }
-    if (address >= kSharedWramBase && address < kSharedWramBase + kSharedWramSize) {
-        WriteToSpan(shared_wram_, kSharedWramBase, address, value);
-    }
-}
-
-void MemoryBus::Write16(uint32_t address, uint16_t value) {
-    Write8(address, static_cast<uint8_t>(value & 0xFFu));
-    Write8(address + 1, static_cast<uint8_t>((value >> 8) & 0xFFu));
-}
-
-void MemoryBus::Write32(uint32_t address, uint32_t value) {
-    Write8(address, static_cast<uint8_t>(value & 0xFFu));
-    Write8(address + 1, static_cast<uint8_t>((value >> 8) & 0xFFu));
-    Write8(address + 2, static_cast<uint8_t>((value >> 16) & 0xFFu));
-    Write8(address + 3, static_cast<uint8_t>((value >> 24) & 0xFFu));
-}
 
 bool Core::Configure(
     const std::optional<std::filesystem::path>& nds_bios7_path,
@@ -180,7 +100,6 @@ bool Core::Configure(
 }
 
 bool Core::Initialize(std::string& error) {
-    (void)error;
     initialized_ = true;
     frame_counter_ = 0;
     firmware_menu_frame_counter_ = 0;
@@ -236,10 +155,26 @@ bool Core::RunFrame(std::string& error) {
         return false;
     }
 
-    const uint32_t arm9_instructions = kArm9CyclesPerFrame * kArmInstructionsPerCycle;
-    const uint32_t arm7_instructions = kArm7CyclesPerFrame * kArmInstructionsPerCycle;
-    arm9_.r[15] = AdvancePc(arm9_.r[15], arm9_instructions, arm9_.thumb);
-    arm7_.r[15] = AdvancePc(arm7_.r[15], arm7_instructions, arm7_.thumb);
+    if (cpus_active_) {
+        arm9_.set_trace_frame(frame_counter_);
+        arm7_.set_trace_frame(frame_counter_);
+        // shortcut: one instruction per cycle on both CPUs at the fixed 2:1 clock ratio, interleaved in
+        // short slices; replace with per-instruction timing once games depend on it.
+        for (uint32_t done = 0u; done < kArm7CyclesPerFrame; done += kSliceCycles) {
+            const uint32_t slice = std::min(kSliceCycles, kArm7CyclesPerFrame - done);
+            for (uint32_t i = 0u; i < slice * 2u && !arm9_halted_; ++i) {
+                if (!arm9_.Step(error)) {
+                    return false;
+                }
+                arm9_halted_ = bus_.cp15().ConsumeHaltRequest(); // Nothing wakes it until IRQs exist.
+            }
+            for (uint32_t i = 0u; i < slice; ++i) {
+                if (!arm7_.Step(error)) {
+                    return false;
+                }
+            }
+        }
+    }
 
     ++frame_counter_;
 
@@ -263,25 +198,70 @@ bool Core::RunFrame(std::string& error) {
 }
 
 bool Core::Reset(std::string& error) {
-    (void)error;
-    arm9_ = {};
-    arm7_ = {};
-    arm9_.cpsr = 0x0000001Fu;
-    arm7_.cpsr = 0x0000001Fu;
-    arm9_.thumb = false;
-    arm7_.thumb = false;
-
-    if (nds_header_.has_value()) {
-        arm9_.r[15] = nds_header_->arm9_entry_address;
-        arm7_.r[15] = nds_header_->arm7_entry_address;
-    } else {
-        arm9_.r[15] = bus_.HasBios9() ? kArm9BiosBase : kMainRamBase;
-        arm7_.r[15] = bus_.HasBios7() ? kArm7BiosBase : kMainRamBase;
-    }
-
+    bus_.ResetMemory();
+    arm9_.Reset();
+    arm7_.Reset();
+    arm9_.set_load_interworking(true);
+    arm9_.WriteCpsr(kCpsrSvc);
+    arm7_.WriteCpsr(kCpsrSvc);
+    arm9_halted_ = false;
+    cpus_active_ = false;
     pending_transition_.reset();
     firmware_menu_frame_counter_ = 0;
+
+    if (nds_header_.has_value() && nds_rom_loaded_) {
+        // Any loaded cartridge is direct-booted: the firmware menu is not emulated.
+        if (!DirectBoot(error)) {
+            running_ = false;
+            return false;
+        }
+        cpus_active_ = true;
+    } else {
+        arm9_.state().r[15] = bus_.HasBios9() ? MemoryBus::kArm9BiosBase : MemoryBus::kMainRamBase;
+        arm7_.state().r[15] = bus_.HasBios7() ? 0u : MemoryBus::kMainRamBase;
+    }
+
     running_ = configured_;
+    return true;
+}
+
+bool Core::DirectBoot(std::string& error) {
+    const std::vector<uint8_t>& rom = bus_.nds_rom();
+    const nds::NdsCartridgeHeaderInfo& header = *nds_header_;
+    const auto copy = [&](arm::IBus& bus, uint32_t rom_offset, uint32_t ram_address, uint32_t size, const char* what) {
+        if (rom_offset > rom.size() || size > rom.size() - rom_offset) {
+            error = std::string("NDS ") + what + " binary lies outside the ROM image";
+            return false;
+        }
+        for (uint32_t i = 0u; i < size; ++i) {
+            bus.Write8(ram_address + i, rom[rom_offset + i]);
+        }
+        return true;
+    };
+
+    // shortcut: approximates the firmware's CP15 handoff (TCMs on, DTCM above the ITCM window,
+    // high vectors); boot code reprograms CP15 itself, so this only has to be usable.
+    Cp15& cp15 = bus_.cp15();
+    cp15.Write(0u, 9u, 1u, 1u, 0x00000020u);             // ITCM: 32 MiB virtual size from 0
+    cp15.Write(0u, 9u, 1u, 0u, kBootDtcmBase | 0x0Au);   // DTCM: 16 KiB, outside the ITCM window
+    cp15.Write(0u, 1u, 0u, 0u, cp15.control() | (1u << 16) | (1u << 18));
+
+    if (!copy(bus_.arm9(), 0u, kHeaderCopyAddress, std::min<uint32_t>(kHeaderCopySize, static_cast<uint32_t>(rom.size())), "header") ||
+        !copy(bus_.arm9(), header.arm9_rom_offset, header.arm9_ram_address, header.arm9_size, "ARM9") ||
+        !copy(bus_.arm7(), header.arm7_rom_offset, header.arm7_ram_address, header.arm7_size, "ARM7")) {
+        return false;
+    }
+    // The BIOS verifies a decrypted secure area's "encryObj" ID and then destroys it.
+    if (header.arm9_rom_offset == kSecureAreaOffset && rom.size() >= kSecureAreaOffset + 8u &&
+        std::memcmp(&rom[kSecureAreaOffset], "encryObj", 8u) == 0) {
+        bus_.arm9().Write32(header.arm9_ram_address, kDestroyedSecureAreaId);
+        bus_.arm9().Write32(header.arm9_ram_address + 4u, kDestroyedSecureAreaId);
+    }
+
+    // shortcut: approximate firmware stack tops (DTCM for the ARM9, ARM7 WRAM for the ARM7);
+    // startup code sets its own stacks before relying on them.
+    StartCpu(arm9_, header.arm9_entry_address, {kBootDtcmBase + 0x3FC0u, kBootDtcmBase + 0x3FA0u, kBootDtcmBase + 0x3EC0u});
+    StartCpu(arm7_, header.arm7_entry_address, {0x0380FFDCu, 0x0380FFB0u, 0x0380FF00u});
     return true;
 }
 
@@ -289,11 +269,6 @@ std::optional<core::TransitionEvent> Core::PollTransition() {
     std::optional<core::TransitionEvent> event = pending_transition_;
     pending_transition_.reset();
     return event;
-}
-
-uint32_t Core::AdvancePc(uint32_t pc, uint32_t instructions, bool thumb) {
-    const uint32_t bytes_per_instruction = thumb ? 2u : 4u;
-    return pc + instructions * bytes_per_instruction;
 }
 
 bool Core::ShouldRequestFirmwareSlot2Transition() const noexcept {

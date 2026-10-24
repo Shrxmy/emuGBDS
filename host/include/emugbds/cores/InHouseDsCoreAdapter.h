@@ -3,6 +3,7 @@
 #include "emugbds/core/IEmuCore.h"
 #include "emugbds/inds/Core.h"
 
+#include <memory>
 #include <optional>
 
 namespace emugbds::cores {
@@ -20,8 +21,12 @@ public:
     bool SetSecondaryRom(const std::filesystem::path& rom_path, std::string& error) override;
     std::optional<core::TransitionEvent> PollTransition() override;
 
+    // Read-only view for bring-up diagnostics.
+    const inds::Core& core() const noexcept { return *core_; }
+
 private:
-    inds::Core core_{};
+    // Heap-owned: the core is large and its CPUs are bound to its own buses, so Initialize replaces it.
+    std::unique_ptr<inds::Core> core_ = std::make_unique<inds::Core>();
     bool configured_ = false;
     bool initialized_ = false;
     bool primary_loaded_ = false;

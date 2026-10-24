@@ -2071,20 +2071,158 @@ void TestIndsMemoryBus(TestContext& t) {
     error.clear();
     t.Expect(bus.LoadSlot2Rom(slot2, error), "inds bus loads Slot-2 ROM");
 
-    t.Expect(bus.Read8(0x00000000u) == bios7_bytes[0], "inds ARM7 BIOS mapping works");
-    t.Expect(bus.Read8(kDsArm9BiosBase) == bios9_bytes[0], "inds ARM9 BIOS mapping works");
-    t.Expect(bus.Read8(kDsSlot2Base) == slot2_bytes[0], "inds Slot-2 mapping works");
+    auto& arm9 = bus.arm9();
+    auto& arm7 = bus.arm7();
+    t.Expect(arm7.Read8(0x00000000u) == bios7_bytes[0], "inds ARM7 BIOS mapping works");
+    t.Expect(arm9.Read8(0x00000000u) == 0u, "inds ARM9 does not see the ARM7 BIOS");
+    t.Expect(arm9.Read8(kDsArm9BiosBase) == bios9_bytes[0], "inds ARM9 BIOS mapping works");
+    t.Expect(arm9.Read8(kDsArm9BiosBase + 0x8000u) == 0u, "inds ARM9 BIOS is not mirrored past its 32 KiB region");
+    t.Expect(arm9.Read8(kDsSlot2Base) == slot2_bytes[0] && arm7.Read8(kDsSlot2Base) == slot2_bytes[0], "inds Slot-2 mapping works");
     t.Expect(
-        bus.Read8(kDsSlot2Base + static_cast<uint32_t>(slot2_bytes.size()) + 7u) == slot2_bytes[7],
+        arm9.Read8(kDsSlot2Base + static_cast<uint32_t>(slot2_bytes.size()) + 7u) == slot2_bytes[7],
         "inds Slot-2 wrap mapping works");
 
-    bus.Write8(kDsMainRamBase + 0x24u, 0xA5);
-    bus.Write8(kDsSharedWramBase + 0x42u, 0x5A);
-    t.Expect(bus.Read8(kDsMainRamBase + 0x24u) == 0xA5, "inds main RAM read/write works");
-    t.Expect(bus.Read8(kDsSharedWramBase + 0x42u) == 0x5A, "inds shared WRAM read/write works");
+    arm9.Write8(kDsMainRamBase + 0x24u, 0xA5);
+    t.Expect(arm7.Read8(kDsMainRamBase + 0x24u) == 0xA5, "inds main RAM is shared by both CPUs");
+    t.Expect(arm9.Read8(kDsMainRamBase + 0x00400024u) == 0xA5, "inds main RAM mirrors every 4 MiB");
+    arm7.Write8(kDsSharedWramBase + 0x42u, 0x5A);
+    t.Expect(arm7.Read8(kDsSharedWramBase + 0x42u) == 0x5A, "inds shared WRAM read/write works");
+    arm7.Write32(0x03800010u, 0x12345678u);
+    t.Expect(arm7.Read32(0x0380FFF0u + 0x20u) == 0x12345678u, "inds ARM7 WRAM mirrors every 64 KiB");
+
+    t.Expect(arm9.Read32(0x04000400u) == 0u, "inds unemulated I/O reads as zero");
+    t.Expect(bus.arm9_unmapped().reads.count(0x04000400u) == 1u, "inds logs unemulated I/O reads");
+    arm9.Write16(0x05000000u, 0x7FFFu);
+    t.Expect(bus.arm9_unmapped().writes.count(0x05000000u) == 1u, "inds logs writes to unemulated memory by block");
 
     bus.ClearSlot2Rom();
-    t.Expect(bus.Read8(kDsSlot2Base) == 0x00, "inds clear slot2 ROM removes mapping");
+    t.Expect(arm9.Read8(kDsSlot2Base) == 0x00, "inds clear slot2 ROM removes mapping");
+}
+
+void TestIndsCp15AndTcm(TestContext& t) {
+    emugbds::inds::MemoryBus bus;
+    auto& cp15 = bus.cp15();
+    auto& arm9 = bus.arm9();
+    uint32_t value = 0u;
+    t.Expect(cp15.Read(0u, 0u, 0u, 0u, value) && value == 0x41059461u, "CP15 main ID is the ARM946 rev 1");
+    t.Expect(cp15.Read(0u, 0u, 0u, 2u, value) && value == 0x00140180u, "CP15 reports 32K ITCM and 16K DTCM");
+    t.Expect(cp15.exception_base() == 0xFFFF0000u, "CP15 resets with high exception vectors");
+    t.Expect(!cp15.Write(1u, 1u, 0u, 0u, 0u), "CP15 rejects opcode1 != 0");
+
+    cp15.Write(0u, 1u, 0u, 0u, 0xFFFFFFFFu);
+    cp15.Read(0u, 1u, 0u, 0u, value);
+    t.Expect(value == 0x000FF0FDu, "CP15 control keeps only the DS-writable bits");
+    cp15.Write(0u, 1u, 0u, 0u, 0x00000000u);
+    cp15.Read(0u, 1u, 0u, 0u, value);
+    t.Expect(value == 0x00000078u && cp15.exception_base() == 0u, "CP15 control bits 3-6 stay set");
+
+    arm9.Write32(0x00000010u, 0xAAAAAAAAu);
+    t.Expect(arm9.Read32(0x00000010u) == 0u, "ITCM is not mapped while disabled");
+    cp15.Write(0u, 9u, 1u, 1u, 0x0000000Eu); // ITCM virtual size 64 KiB from 0
+    cp15.Write(0u, 9u, 1u, 0u, 0x0080000Au); // DTCM 16 KiB at 00800000h, outside the ITCM window
+    cp15.Write(0u, 1u, 0u, 0u, (1u << 16) | (1u << 18));
+    arm9.Write32(0x00000010u, 0x11223344u);
+    t.Expect(arm9.Read32(0x00008010u) == 0x11223344u, "ITCM mirrors its 32 KiB across the virtual size");
+    t.Expect(arm9.Read32(0x00010010u) == 0u, "ITCM ends at its virtual size");
+    arm9.Write32(0x00800020u, 0x55667788u);
+    t.Expect(arm9.Read32(0x00800020u) == 0x55667788u && arm9.Read32(0x00000020u) == 0u, "DTCM maps at its programmed base");
+    t.Expect(arm9.Read32(0x00804020u) == 0u, "DTCM ends at its virtual size");
+    t.Expect(bus.arm7().Read32(0x00800020u) == 0u, "the ARM7 has no TCM");
+
+    cp15.Write(0u, 9u, 1u, 0u, 0x0000000Au); // Move DTCM under ITCM: ITCM wins.
+    t.Expect(arm9.Read32(0x00000010u) == 0x11223344u, "ITCM has priority over an overlapping DTCM");
+
+    // Load mode: writes land in the TCM, reads see the memory underneath.
+    cp15.Write(0u, 9u, 1u, 0u, 0x0200000Au); // DTCM 16 KiB over main RAM
+    arm9.Write32(0x02000040u, 0x0000AAAAu);
+    cp15.Write(0u, 1u, 0u, 0u, (1u << 16) | (1u << 17) | (1u << 18));
+    arm9.Write32(0x02000040u, 0x0000BBBBu);
+    t.Expect(arm9.Read32(0x02000040u) == 0u, "DTCM load mode reads the memory underneath");
+    cp15.Write(0u, 1u, 0u, 0u, (1u << 16) | (1u << 18));
+    t.Expect(arm9.Read32(0x02000040u) == 0xBBBBu, "DTCM load mode still writes into the DTCM");
+
+    cp15.Write(0u, 9u, 1u, 1u, 0x0000002Eu); // N=23: ITCM covers the whole 4 GiB
+    arm9.Write32(0x00007FFCu, 0xCD000000u);
+    t.Expect(arm9.Read8(0xFFFFFFFFu) == 0xCDu, "a 4 GiB ITCM window includes the last byte");
+
+    t.Expect(!cp15.ConsumeHaltRequest(), "CP15 has no pending halt");
+    cp15.Write(0u, 7u, 0u, 4u, 0u);
+    t.Expect(cp15.ConsumeHaltRequest() && !cp15.ConsumeHaltRequest(), "CP15 wait-for-interrupt requests one halt");
+}
+
+void TestIndsWramcnt(TestContext& t) {
+    emugbds::inds::MemoryBus bus;
+    auto& arm9 = bus.arm9();
+    auto& arm7 = bus.arm7();
+    t.Expect(arm7.Read8(0x04000241u) == 3u, "WRAMSTAT starts with all shared WRAM on the ARM7");
+    arm7.Write32(0x03000000u, 0x0000AAAAu); // First 16K
+    arm7.Write32(0x03004000u, 0x0000BBBBu); // Second 16K
+    arm7.Write32(0x03800000u, 0x0000CCCCu); // ARM7 WRAM
+    t.Expect(arm9.Read32(0x03000000u) == 0u, "WRAMCNT 3: the ARM9 has no shared WRAM");
+
+    arm9.Write8(0x04000247u, 0u);
+    t.Expect(arm9.Read32(0x03004000u) == 0xBBBBu && arm9.Read8(0x04000247u) == 0u, "WRAMCNT 0: the ARM9 sees all 32K");
+    t.Expect(arm7.Read32(0x03000000u) == 0xCCCCu, "WRAMCNT 0: the ARM7 sees its own WRAM there");
+    arm9.Write8(0x04000247u, 1u);
+    t.Expect(arm9.Read32(0x03000000u) == 0xBBBBu && arm7.Read32(0x03000000u) == 0xAAAAu, "WRAMCNT 1: ARM9 2nd 16K, ARM7 1st 16K");
+    arm9.Write8(0x04000247u, 2u);
+    t.Expect(arm9.Read32(0x03000000u) == 0xAAAAu && arm7.Read32(0x03000000u) == 0xBBBBu, "WRAMCNT 2: ARM9 1st 16K, ARM7 2nd 16K");
+    t.Expect(arm7.Read8(0x04000241u) == 2u, "WRAMSTAT reports the ARM9's WRAMCNT");
+    t.Expect(arm9.Read32(0x04000244u) == 0x02000000u, "a wide I/O read keeps the implemented byte lanes");
+    t.Expect(arm7.Read32(0x04000240u) == 0x00000200u, "WRAMSTAT keeps its lane in a wide ARM7 read");
+}
+
+void TestIndsDirectBootRunsBothCpus(TestContext& t) {
+    const auto dir = MakeTempRoot() / "inds-dual-cpu";
+    std::filesystem::create_directories(dir);
+    const auto nds = dir / "dual.nds";
+
+    std::vector<uint8_t> rom = BuildSyntheticNdsRom();
+    rom.resize(0x1000u, 0u);
+    WriteLe32(rom, 0x20, 0x00000400u); // ARM9 binary at ROM 400h -> 02000000h
+    WriteLe32(rom, 0x2C, 0x00000100u);
+    WriteLe32(rom, 0x30, 0x00000800u); // ARM7 binary at ROM 800h -> 02380000h
+    WriteLe32(rom, 0x3C, 0x00000100u);
+    auto arm9_word = [&](uint32_t offset, uint32_t word) { WriteLe32(rom, 0x400u + offset, word); };
+    auto arm7_word = [&](uint32_t offset, uint32_t word) { WriteLe32(rom, 0x800u + offset, word); };
+    auto bne = [](int32_t relative_words) { return (EncodeBranchRelativeWords(relative_words) & 0x0FFFFFFFu) | 0x10000000u; };
+
+    // ARM9: read CP15's ID and the header copy, then wait for the ARM7's word in main RAM.
+    arm9_word(0x00u, 0xEE103F10u);                          // MRC p15, 0, r3, c0, c0, 0
+    arm9_word(0x04u, EncodeLdrLiteralAt(4u, 0x04u, 0x40u)); // r4 = 027FFE0Ch
+    arm9_word(0x08u, EncodeLdrReg(4u, 4u, 0u));             // r4 = game code
+    arm9_word(0x0Cu, EncodeLdrLiteralAt(1u, 0x0Cu, 0x44u)); // r1 = 02100000h
+    arm9_word(0x10u, EncodeLdrReg(2u, 1u, 0u));             // loop: r2 = [r1]
+    arm9_word(0x14u, EncodeSubImmSetFlags(5u, 2u, 0u));
+    arm9_word(0x18u, (bne(-4) & 0x0FFFFFFFu) | 0x00000000u); // BEQ loop
+    arm9_word(0x1Cu, EncodeBranchRelativeWords(-2));
+    arm9_word(0x40u, 0x027FFE0Cu);
+    arm9_word(0x44u, 0x02100000u);
+    // ARM7: publish a value for the ARM9.
+    arm7_word(0x00u, EncodeMovImm(0u, 0x22u));
+    arm7_word(0x04u, EncodeLdrLiteralAt(1u, 0x04u, 0x40u));
+    arm7_word(0x08u, EncodeStrReg(0u, 1u, 0u));
+    arm7_word(0x0Cu, EncodeBranchRelativeWords(-2));
+    arm7_word(0x40u, 0x02100000u);
+    WriteFile(nds, rom);
+
+    emugbds::inds::Core core;
+    std::string error;
+    t.Expect(core.Configure(std::nullopt, std::nullopt, std::nullopt, emugbds::core::DsBootMode::Direct, false, error),
+        "inds dual-CPU core configures");
+    t.Expect(core.Initialize(error) && core.LoadPrimaryRom(nds, error), "inds dual-CPU core direct-boots the ROM");
+    t.Expect((core.arm9().cpsr & 0x1Fu) == 0x1Fu && core.arm9().r[13] != 0u, "inds direct boot enters System mode with a stack");
+    const auto& cp15 = core.memory().cp15();
+    const uint32_t sp = core.arm9().r[13];
+    t.Expect(sp - cp15.dtcm_base() < cp15.dtcm_size() && sp >= cp15.itcm_size(),
+        "inds direct boot puts the ARM9 stack in DTCM, outside the ITCM window");
+    t.Expect(core.RunFrame(error), "inds dual-CPU core runs a frame");
+    t.Expect(core.arm9().r[3] == 0x41059461u, "inds ARM9 reads CP15 through MRC");
+    t.Expect(core.arm9().r[4] == 0x4442474Eu, "inds direct boot copies the header to 027FFE00h");
+    t.Expect(core.arm7().r[0] == 0x22u, "inds ARM7 runs its own binary");
+    t.Expect(core.arm9().r[2] == 0x22u, "inds ARM9 sees the ARM7's main RAM write");
+    t.Expect(core.arm9_cpu().unknown_arm_instruction_count() == 0u && core.arm7_cpu().unknown_arm_instruction_count() == 0u,
+        "inds dual-CPU programs use only supported instructions");
 }
 
 void TestIndsCoreFirmwareSlot2Transition(TestContext& t) {
@@ -2276,7 +2414,7 @@ int RunUnitTests() {
         void (*fn)(TestContext&);
     };
 
-    const std::array<NamedTest, 44> tests = {{
+    const std::array<NamedTest, 47> tests = {{
         {"arm_v5_clz_and_saturation", &TestArmV5ClzAndSaturation},
         {"arm_v5_halfword_multiplies", &TestArmV5HalfwordMultiplies},
         {"arm_v5_branches_and_interworking", &TestArmV5BranchesAndInterworking},
@@ -2315,6 +2453,9 @@ int RunUnitTests() {
         {"ingba_video_obj_render", &TestIngbaVideoObjRender},
         {"ingba_video_mode2_render", &TestIngbaVideoMode2Render},
         {"inds_memory_bus", &TestIndsMemoryBus},
+        {"inds_cp15_and_tcm", &TestIndsCp15AndTcm},
+        {"inds_wramcnt", &TestIndsWramcnt},
+        {"inds_direct_boot_runs_both_cpus", &TestIndsDirectBootRunsBothCpus},
         {"inds_core_firmware_slot2_transition", &TestIndsCoreFirmwareSlot2Transition},
         {"inds_core_direct_nds_boot", &TestIndsCoreDirectNdsBoot},
         {"runtime_kernel_inject_input_to_gba", &TestRuntimeKernelInjectInputToGba},

@@ -80,16 +80,25 @@ the single source-of-truth when adding a new GBA module.
 - Adapter:
   - `host/include/emugbds/cores/InHouseDsCoreAdapter.h`
   - `host/src/cores/InHouseDsCoreAdapter.cpp`
-- Core:
+- Core (two shared `arm::ArmCpu` instances, scheduler, direct boot):
   - `host/include/emugbds/inds/Core.h`
   - `host/src/inds/Core.cpp`
+- Memory (ARM9/ARM7 bus views, TCM, shared WRAM, I/O, unmapped-access log):
   - `host/include/emugbds/inds/MemoryBus.h`
+  - `host/src/inds/MemoryBus.cpp`
+- ARM9 CP15 (control register, TCM regions, wait for interrupt):
+  - `host/include/emugbds/inds/Cp15.h`
+  - `host/src/inds/Cp15.cpp`
 
 Current DS core status:
-- Frame/timing scaffold for ARM9/ARM7
-- BIOS/firmware/ROM loading
-- Slot-2 ROM loading and transition signaling
-- Not yet a full playable DS implementation
+- ARM9 (ARMv5TE) and ARM7 (ARMv4T) execute real code, interleaved 2:1.
+- A loaded `.nds` is direct-booted: header copied to 027FFE00h, both binaries
+  loaded, both CPUs started at their entry points; SWIs run the BIOS images.
+- ARM9/ARM7 memory maps with ITCM/DTCM and WRAMCNT; I/O beyond WRAMCNT is not
+  emulated yet and is listed by `--debug-stats` in DS mode.
+- Without a cartridge, ds-firmware mode keeps the Slot-2 GBA handoff (the
+  firmware menu itself is not emulated).
+- No interrupts, IPC, timers, or video yet.
 
 ## 6) Boot Policy (Default BIOS Paths)
 

@@ -62,7 +62,7 @@ if(EMUGBDS_ENABLE_MELONDS)
 endif()
 
 # Keep core implementation units in one place so the application and tests
-# cannot silently drift apart as the in-house GBA core is modularized.
+# cannot silently drift apart: the shared ARM CPU, the GBA core, and the DS core.
 set(EMUGBDS_ARM_CPU_SOURCES
     host/src/arm/ArmCpu.cpp
     host/src/arm/ArmExecute.cpp
@@ -70,12 +70,17 @@ set(EMUGBDS_ARM_CPU_SOURCES
 )
 
 set(EMUGBDS_INHOUSE_GBA_SOURCES
-    ${EMUGBDS_ARM_CPU_SOURCES}
     host/src/ingba/Core.cpp
     host/src/ingba/MemoryBus.cpp
     host/src/ingba/Swi.cpp
     host/src/ingba/Video.cpp
     host/src/ingba/Apu.cpp
+)
+
+set(EMUGBDS_INHOUSE_DS_SOURCES
+    host/src/inds/Core.cpp
+    host/src/inds/MemoryBus.cpp
+    host/src/inds/Cp15.cpp
 )
 
 add_executable(emugbds
@@ -84,8 +89,9 @@ add_executable(emugbds
     host/src/runtime/RuntimeKernel.cpp
     host/src/boot/BootPolicy.cpp
     host/src/scheduler/FrameScheduler.cpp
+    ${EMUGBDS_ARM_CPU_SOURCES}
     ${EMUGBDS_INHOUSE_GBA_SOURCES}
-    host/src/inds/Core.cpp
+    ${EMUGBDS_INHOUSE_DS_SOURCES}
     host/src/gba/GbaCartridgeHeader.cpp
     host/src/nds/NdsCartridgeHeader.cpp
     host/src/cores/InHouseDsCoreAdapter.cpp
@@ -131,8 +137,9 @@ if(BUILD_TESTING)
         host/src/runtime/RuntimeKernel.cpp
         host/src/cores/InHouseDsCoreAdapter.cpp
         host/src/cores/InHouseGbaCoreAdapter.cpp
-        host/src/inds/Core.cpp
+        ${EMUGBDS_ARM_CPU_SOURCES}
         ${EMUGBDS_INHOUSE_GBA_SOURCES}
+        ${EMUGBDS_INHOUSE_DS_SOURCES}
         host/src/gba/GbaCartridgeHeader.cpp
         host/src/nds/NdsCartridgeHeader.cpp
     )

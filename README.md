@@ -4,7 +4,7 @@ Clean-room emulator host focused on in-house core development.
 
 Current state:
 - In-house GBA core scaffold (`ingba`) with incremental ARM execution support.
-- In-house DS core scaffold (`inds`) with dual-CPU timing skeleton and firmware Slot-2 transition support.
+- In-house DS core (`inds`) in bring-up: ARM9/ARM7 run real code on the shared CPU after a direct boot; no interrupts, IPC, or video yet. Firmware Slot-2 transition support.
 - Optional external melonDS adapter support behind `EMUGBDS_ENABLE_MELONDS`.
 
 ## Documentation

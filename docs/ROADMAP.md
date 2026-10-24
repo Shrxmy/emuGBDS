@@ -32,10 +32,11 @@ Goal: stable pitch and sync.
 
 Goal: progress from scaffold to executable ARM9/ARM7 instruction core.
 
-1. Replace PC-advance scaffold with real fetch/decode/execute loop.
-2. Build DS memory map step-by-step (RAM, WRAM banking, MMIO stubs).
-3. Implement BIOS boot flow and minimal firmware behavior.
-4. Keep Slot-2 transition support as an integration target.
+1. Done: shared ARM CPU (ARMv4T/ARMv5TE) running both DS CPUs.
+2. Done: ARM9/ARM7 memory maps with TCM (CP15) and WRAMCNT; direct boot.
+3. Next: interrupt controllers, IPC sync/FIFO, timers, DMA, LCD timing.
+4. Then: 2D engines, then 3D, sound, and firmware/BIOS boot flow.
+5. Keep Slot-2 transition support as an integration target.
 
 ## Phase 4: Runtime and Tooling
 
