@@ -2258,6 +2258,169 @@ void TestIndsIoInterruptsAndDma(TestContext& t) {
     t.Expect((arm9.Read16(0x02100020u) & 0x4u) != 0u, "V-Blank DMA sees the VCOUNT match of line 192");
 }
 
+void TestIndsEmptyCardSlot(TestContext& t) {
+    emugbds::inds::MemoryBus bus;
+    auto& arm7 = bus.arm7();
+    auto& arm9 = bus.arm9();
+    arm9.Write16(0x04000204u, 0x0800u);          // EXMEMCNT: NDS slot to the ARM7
+    arm7.Write16(0x040001A0u, 0xC000u);          // AUXSPICNT: slot enable, transfer IRQ
+    arm7.Write32(0x04000210u, 1u << 19);         // IE: card transfer complete
+    arm7.Write32(0x040001A8u, 0x00000090u);      // Command 90h: chip ID
+    arm7.Write32(0x040001A4u, 0xA7000000u);      // Start, release reset, 4-byte block
+    t.Expect((arm7.Read32(0x040001A4u) & 0x80800000u) == 0x80800000u, "card transfer is busy with data ready");
+    t.Expect(arm7.Read32(0x04100010u) == 0xFFFFFFFFu, "an empty NDS slot reads all ones");
+    t.Expect((arm7.Read32(0x040001A4u) & 0x80800000u) == 0u, "the transfer ends after its last word");
+    t.Expect((arm7.Read32(0x04000214u) & (1u << 19)) != 0u, "transfer completion raises the card IRQ on the slot owner");
+    t.Expect((arm9.Read32(0x04000214u) & (1u << 19)) == 0u, "the other CPU gets no card IRQ");
+    t.Expect(arm9.Read32(0x040001A4u) == 0u, "the CPU without slot rights reads card registers as zero");
+    arm9.Write32(0x040001A4u, 0x87000000u);
+    t.Expect((arm7.Read32(0x040001A4u) & 0x80000000u) == 0u, "the CPU without slot rights cannot start a transfer");
+    arm7.Write32(0x040001A4u, 0x80000000u);      // Reset bit 29 cannot be cleared; zero-length block
+    t.Expect((arm7.Read32(0x040001A4u) & 0xA0800000u) == 0x20000000u, "a zero-length transfer completes at once; RESB sticks");
+}
+
+void TestIndsSpiDevices(TestContext& t) {
+    const auto dir = MakeTempRoot() / "inds-spi";
+    std::filesystem::create_directories(dir);
+    const auto firmware = dir / "firmware.bin";
+    std::vector<uint8_t> image(0x40000u, 0u);
+    image[0x20u] = 0xA1u;
+    image[0x21u] = 0xB2u;
+    WriteFile(firmware, image);
+
+    emugbds::inds::MemoryBus bus;
+    std::string error;
+    t.Expect(bus.LoadFirmware(firmware, error), "SPI firmware image loads");
+    auto& arm7 = bus.arm7();
+    auto exchange = [&](uint16_t spicnt, uint8_t out) {
+        arm7.Write16(0x040001C0u, spicnt);
+        arm7.Write16(0x040001C2u, out);
+        return static_cast<uint8_t>(arm7.Read16(0x040001C2u));
+    };
+    constexpr uint16_t kFlashHold = 0x8000u | 0x0100u | 0x0800u; // enable, firmware, hold
+    constexpr uint16_t kFlashLast = 0x8000u | 0x0100u;
+    exchange(kFlashHold, 0x03u); // READ
+    exchange(kFlashHold, 0x00u);
+    exchange(kFlashHold, 0x00u);
+    exchange(kFlashHold, 0x20u);
+    t.Expect(exchange(kFlashHold, 0u) == 0xA1u && exchange(kFlashLast, 0u) == 0xB2u, "SPI flash READ streams the firmware image");
+    exchange(kFlashHold, 0x9Fu); // RDID
+    t.Expect(exchange(kFlashHold, 0u) == 0x20u && exchange(kFlashHold, 0u) == 0x40u && exchange(kFlashLast, 0u) == 0x12u,
+        "SPI flash reports a 256 KiB ST M45PE20-style ID");
+    exchange(kFlashLast, 0x06u); // WREN
+    exchange(kFlashHold, 0x05u); // RDSR
+    t.Expect(exchange(kFlashLast, 0u) == 0x02u, "SPI flash status shows write enable");
+    exchange(kFlashHold, 0x0Au); // PW at 000100h
+    exchange(kFlashHold, 0x00u);
+    exchange(kFlashHold, 0x01u);
+    exchange(kFlashHold, 0x00u);
+    exchange(kFlashLast, 0x5Au);
+    t.Expect(bus.firmware_image()[0x100u] == 0x5Au, "SPI flash page write updates the in-memory image");
+    exchange(kFlashHold, 0x05u);
+    t.Expect(exchange(kFlashLast, 0u) == 0x00u, "a completed page write clears write enable");
+    exchange(kFlashHold, 0x03u); // READ left held, then the device switches
+    exchange(0x8000u | 0x0800u, 0x80u); // power management, hold: must start a new command
+    t.Expect(exchange(0x8000u, 0u) == 0x0Du, "switching SPI device ends the held flash command");
+
+    constexpr uint16_t kPowerHold = 0x8000u | 0x0800u; // enable, power management, hold
+    constexpr uint16_t kPowerLast = 0x8000u;
+    exchange(kPowerHold, 0x00u); // write register 0
+    exchange(kPowerLast, 0x05u);
+    exchange(kPowerHold, 0x80u); // read register 0
+    t.Expect(exchange(kPowerLast, 0u) == 0x05u, "SPI power management registers read back");
+
+    arm7.Write32(0x04000210u, 1u << 23);
+    exchange(0x8000u | 0x4000u | 0x0200u, 0x90u); // touchscreen, IRQ enabled
+    t.Expect((arm7.Read32(0x04000214u) & (1u << 23)) != 0u, "an SPI transfer with IRQ enabled raises IF bit 23");
+
+    arm7.Write16(0x04000504u, 0x0200u);
+    t.Expect(arm7.Read16(0x04000504u) == 0x0200u, "SOUNDBIAS keeps the value the BIOS ramps");
+}
+
+void TestIndsMathUnit(TestContext& t) {
+    emugbds::inds::MemoryBus bus;
+    auto& arm9 = bus.arm9();
+    auto result64 = [&](uint32_t address) {
+        return static_cast<uint64_t>(arm9.Read32(address)) | (static_cast<uint64_t>(arm9.Read32(address + 4u)) << 32u);
+    };
+    arm9.Write16(0x04000280u, 0u); // 32/32
+    arm9.Write32(0x04000290u, 7u);
+    arm9.Write32(0x04000298u, static_cast<uint32_t>(-2));
+    t.Expect(result64(0x040002A0u) == static_cast<uint64_t>(-3) && result64(0x040002A8u) == 1u,
+        "32-bit signed divide sign-extends quotient and remainder");
+    arm9.Write32(0x04000290u, 5u);
+    arm9.Write32(0x04000298u, 0u);
+    t.Expect((arm9.Read16(0x04000280u) & 0x4000u) != 0u, "divide by zero sets DIVCNT bit 14");
+    t.Expect(result64(0x040002A0u) == 0x00000000FFFFFFFFull && result64(0x040002A8u) == 5u,
+        "32-bit divide by zero gives -1 with the upper half inverted and REMAIN=NUMER");
+    arm9.Write16(0x04000280u, 2u); // 64/64
+    arm9.Write32(0x04000290u, 0u);
+    arm9.Write32(0x04000294u, 0x10u); // 10_0000_0000h
+    arm9.Write32(0x04000298u, 0x100u);
+    arm9.Write32(0x0400029Cu, 0u);
+    t.Expect(result64(0x040002A0u) == 0x0000000010000000ull && (arm9.Read16(0x04000280u) & 0x4000u) == 0u,
+        "64-bit divide uses both halves and clears the DIV0 flag");
+    arm9.Write16(0x040002B0u, 1u); // 64-bit sqrt
+    arm9.Write32(0x040002B8u, 0u);
+    arm9.Write32(0x040002BCu, 0x100u); // 2^40
+    t.Expect(arm9.Read32(0x040002B4u) == (1u << 20), "64-bit square root");
+    arm9.Write16(0x040002B0u, 0u); // 32-bit mode ignores the upper word
+    arm9.Write32(0x040002B8u, 99u);
+    t.Expect(arm9.Read32(0x040002B4u) == 9u, "32-bit square root rounds down and ignores the upper word");
+}
+
+void TestIndsRtc(TestContext& t) {
+    emugbds::inds::MemoryBus bus;
+    auto& arm7 = bus.arm7();
+    constexpr uint16_t kClockSelectOut = 0x0060u; // SCK and CS driven by the CPU
+    auto write_lines = [&](uint16_t lines) { arm7.Write16(0x04000138u, lines); };
+    auto send_byte = [&](uint8_t byte) {
+        for (int bit = 0; bit < 8; ++bit) {
+            const uint16_t data = static_cast<uint16_t>((byte >> bit) & 1u);
+            write_lines(static_cast<uint16_t>(kClockSelectOut | 0x10u | 0x4u | data));       // SCK low
+            write_lines(static_cast<uint16_t>(kClockSelectOut | 0x10u | 0x4u | 0x2u | data)); // SCK high
+        }
+    };
+    auto receive_byte = [&]() {
+        uint8_t byte = 0u;
+        for (int bit = 0; bit < 8; ++bit) {
+            write_lines(kClockSelectOut | 0x4u);
+            write_lines(kClockSelectOut | 0x4u | 0x2u);
+            byte = static_cast<uint8_t>(byte | ((arm7.Read16(0x04000138u) & 1u) << bit));
+        }
+        return byte;
+    };
+    auto begin = [&](uint8_t command) {
+        write_lines(kClockSelectOut | 0x10u | 0x2u); // CS low, SCK high
+        write_lines(kClockSelectOut | 0x10u | 0x6u); // CS high
+        send_byte(command);
+    };
+    auto end = [&]() { write_lines(kClockSelectOut | 0x10u | 0x2u); };
+
+    begin(0x86u); // read status 1 (LSB-first command)
+    t.Expect(receive_byte() == 0x02u, "RTC status 1 reads 24-hour mode with no power-off flag");
+    end();
+    begin(0x76u); // write free register
+    send_byte(0x5Au);
+    end();
+    begin(0xF6u);
+    t.Expect(receive_byte() == 0x5Au, "RTC free register reads back what was written");
+    end();
+    begin(0x6Fu); // MSB-first form of F6h
+    t.Expect(receive_byte() == 0x5Au, "RTC accepts MSB-first commands");
+    end();
+    begin(0xA6u); // read date and time
+    const uint8_t year = receive_byte();
+    const uint8_t month = receive_byte();
+    const uint8_t day = receive_byte();
+    end();
+    auto valid_bcd = [](uint8_t value, uint8_t low, uint8_t high) {
+        return (value & 0x0Fu) <= 9u && value >= low && value <= high;
+    };
+    t.Expect(valid_bcd(year, 0x00u, 0x99u) && valid_bcd(month, 0x01u, 0x12u) && valid_bcd(day, 0x01u, 0x31u),
+        "RTC date reads as valid BCD");
+}
+
 // Builds a direct-boot ROM: ARM9 code at ROM 400h -> 02000000h, ARM7 code at ROM 800h -> 02380000h.
 std::vector<uint8_t> BuildDualCpuNdsRom(const std::vector<uint32_t>& arm9, const std::vector<uint32_t>& arm7) {
     std::vector<uint8_t> rom = BuildSyntheticNdsRom();
@@ -2605,7 +2768,7 @@ int RunUnitTests() {
         void (*fn)(TestContext&);
     };
 
-    const std::array<NamedTest, 52> tests = {{
+    const std::array<NamedTest, 56> tests = {{
         {"arm_v5_clz_and_saturation", &TestArmV5ClzAndSaturation},
         {"arm_v5_halfword_multiplies", &TestArmV5HalfwordMultiplies},
         {"arm_v5_branches_and_interworking", &TestArmV5BranchesAndInterworking},
@@ -2651,6 +2814,10 @@ int RunUnitTests() {
         {"inds_ipc", &TestIndsIpc},
         {"inds_io_interrupts_and_dma", &TestIndsIoInterruptsAndDma},
         {"inds_irq_wakes_halted_arm9", &TestIndsIrqWakesHaltedArm9},
+        {"inds_empty_card_slot", &TestIndsEmptyCardSlot},
+        {"inds_spi_devices", &TestIndsSpiDevices},
+        {"inds_math_unit", &TestIndsMathUnit},
+        {"inds_rtc", &TestIndsRtc},
         {"inds_haltcnt_gba_mode_transition", &TestIndsHaltcntGbaModeTransition},
         {"inds_core_firmware_slot2_transition", &TestIndsCoreFirmwareSlot2Transition},
         {"inds_core_direct_nds_boot", &TestIndsCoreDirectNdsBoot},

@@ -82,6 +82,10 @@ set(EMUGBDS_INHOUSE_DS_SOURCES
     host/src/inds/MemoryBus.cpp
     host/src/inds/Cp15.cpp
     host/src/inds/Io.cpp
+    host/src/inds/GameCard.cpp
+    host/src/inds/Spi.cpp
+    host/src/inds/MathUnit.cpp
+    host/src/inds/Rtc.cpp
     host/src/inds/Ipc.cpp
     host/src/inds/Timers.cpp
 )

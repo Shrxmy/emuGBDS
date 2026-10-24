@@ -166,7 +166,7 @@ uint32_t MemoryBus::Read(bool arm9, uint32_t address, uint32_t size, bool use_tc
         return (word & mask) >> ((address & 3u) * 8u);
     }
     auto& log = arm9 ? arm9_unmapped_ : arm7_unmapped_;
-    ++log.reads[io ? address : (address & 0xFFFF0000u)];
+    AccessLog::Count(log.reads, io ? address : (address & 0xFFFF0000u));
     return 0u; // Undefined I/O reads as zero on the DS.
 }
 
@@ -191,7 +191,7 @@ void MemoryBus::Write(bool arm9, uint32_t address, uint32_t value, uint32_t size
         return;
     }
     auto& log = arm9 ? arm9_unmapped_ : arm7_unmapped_;
-    ++log.writes[io ? address : (address & 0xFFFF0000u)];
+    AccessLog::Count(log.writes, io ? address : (address & 0xFFFF0000u));
 }
 
 } // namespace emugbds::inds

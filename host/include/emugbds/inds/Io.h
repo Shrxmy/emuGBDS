@@ -6,7 +6,11 @@
 // Registers are accessed per 32-bit word with a byte-lane mask; CPU index 0 is
 // the ARM9 and 1 is the ARM7.
 
+#include "emugbds/inds/GameCard.h"
 #include "emugbds/inds/Ipc.h"
+#include "emugbds/inds/MathUnit.h"
+#include "emugbds/inds/Rtc.h"
+#include "emugbds/inds/Spi.h"
 #include "emugbds/inds/Timers.h"
 
 #include <array>
@@ -52,6 +56,10 @@ public:
     bool gba_mode_requested() const noexcept { return gba_mode_requested_; }
     bool ConsumeGbaModeRequest() noexcept { return Consume(gba_mode_requested_); }
     uint16_t vcount() const noexcept { return vcount_; }
+    // Interrupt registers, for bring-up reports.
+    uint32_t ime(int cpu) const noexcept { return cpus_[cpu].ime; }
+    uint32_t ie(int cpu) const noexcept { return cpus_[cpu].ie; }
+    uint32_t iflags(int cpu) const noexcept { return cpus_[cpu].iflags; }
 
 private:
     struct DmaChannel {
@@ -90,14 +98,26 @@ private:
     void RunDma(int cpu, uint32_t channel);
     void TriggerDma(int cpu, uint32_t mode);
     void UpdateVCountMatch(int cpu) noexcept;
+    // The CPU that owns the NDS slot (EXMEMCNT bit 11).
+    int CardOwner() const noexcept { return (exmem_shared_ & (1u << 11)) != 0u ? 1 : 0; }
+    void PumpCardDma();
+    void RaiseCardIrq() noexcept;
 
     MemoryBus& memory_;
     std::array<CpuIo, 2> cpus_{};
     Ipc ipc_{};
+    GameCard card_{};
+    Spi spi_{};
+    MathUnit math_{};
+    Rtc rtc_{};
+    // ARM7 sound registers 400h-51Fh.
+    // shortcut: plain storage; channels and capture finish at once (busy bits clear) until DS audio exists.
+    std::array<uint32_t, 0x48> sound_{};
     std::array<uint32_t, 4> dma_fill_{};      // ARM9 DMA fill data (40000E0h-40000EFh)
     std::array<uint8_t, 9> vramcnt_{};        // ARM9 VRAMCNT A-I latches (VRAM banking comes with video)
     uint16_t exmem_shared_ = 0;               // EXMEMCNT bits 7-15, set by the ARM9 only
     uint16_t wifiwaitcnt_ = 0;
+    uint16_t rcnt_ = 0; // ARM7 RCNT, stored only (no serial port)
     uint16_t vcount_ = 0;
     bool arm7_halt_requested_ = false;
     bool gba_mode_requested_ = false;

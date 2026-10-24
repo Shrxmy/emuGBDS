@@ -89,9 +89,9 @@ the single source-of-truth when adding a new GBA module.
 - ARM9 CP15 (control register, TCM regions, wait for interrupt):
   - `host/include/emugbds/inds/Cp15.h`
   - `host/src/inds/Cp15.cpp`
-- I/O, IPC, and timers:
-  - `host/include/emugbds/inds/Io.h`, `Ipc.h`, `Timers.h`
-  - `host/src/inds/Io.cpp`, `Ipc.cpp`, `Timers.cpp`
+- I/O, IPC, timers, and devices:
+  - `host/include/emugbds/inds/Io.h`, `Ipc.h`, `Timers.h`, `GameCard.h`, `Spi.h`, `Rtc.h`, `MathUnit.h`
+  - `host/src/inds/Io.cpp`, `Ipc.cpp`, `Timers.cpp`, `GameCard.cpp`, `Spi.cpp`, `Rtc.cpp`, `MathUnit.cpp`
 
 Current DS core status:
 - ARM9 (ARMv5TE) and ARM7 (ARMv4T) execute real code, interleaved 2:1.
@@ -101,10 +101,11 @@ Current DS core status:
 - Interrupts (IME/IE/IF, halt and wake), IPC sync/FIFO, timers, DMA
   (immediate, V-Blank, H-Blank), DISPSTAT/VCOUNT line timing.
 - An ARM7 HALTCNT GBA-mode write switches the console to the GBA core.
-- Unemulated I/O is listed by `--debug-stats` in DS mode (next: cartridge
-  bus, SPI firmware/touch/power, RTC, math unit, video).
-- Without a cartridge, ds-firmware mode keeps the simulated Slot-2 GBA handoff
-  (the firmware itself is not run yet).
+- Empty cartridge slot, SPI firmware flash/power management, RTC, math unit.
+- Unemulated I/O, IME/IE/IF and halt state are listed by `--debug-stats` in DS mode.
+- `--boot-mode bios` runs the real BIOS and firmware from reset; it reaches the
+  first screens and waits for input (no video or touch yet).
+- Without a cartridge, ds-firmware mode keeps the simulated Slot-2 GBA handoff.
 
 ## 6) Boot Policy (Default BIOS Paths)
 

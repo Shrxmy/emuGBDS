@@ -67,6 +67,10 @@ coordinate modules rather than grow new device implementations.
 | `Io.cpp` | per-CPU I/O registers: IME/IE/IF, DISPSTAT/VCOUNT, DMA, keypad, POSTFLG, HALTCNT, POWCNT, EXMEMCNT, VRAMCNT/WRAMCNT |
 | `Ipc.cpp` | IPCSYNC and the two IPC FIFOs with their edge-triggered IRQs |
 | `Timers.cpp` | one CPU's four 33.51 MHz timers with cascade and overflow IRQs |
+| `GameCard.cpp` | Slot-1 card bus registers, card DMA and transfer IRQ (empty slot only) |
+| `Spi.cpp` | ARM7 SPI bus: firmware flash (in-memory copy), power management, touchscreen stub |
+| `Rtc.cpp` | ARM7 bit-banged Seiko RTC on 4000138h, host clock |
+| `MathUnit.cpp` | ARM9 divider and square root |
 | `Cp15.cpp` | ARM9 CP15: ID and control registers, TCM regions, wait for interrupt |
 
 The ARM9's CP15 is owned by the memory object because its TCM settings decide

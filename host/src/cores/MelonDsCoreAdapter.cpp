@@ -378,6 +378,7 @@ bool MelonDsCoreAdapter::ShouldDirectBoot(std::string& error) const {
     case core::DsBootMode::Direct:
         return true;
     case core::DsBootMode::DsFirmware:
+    case core::DsBootMode::Bios:
         if (nds_->NeedsDirectBoot()) {
             error = "DS firmware boot requested, but loaded BIOS/Firmware are not bootable; falling back to direct boot is disallowed";
             return false;

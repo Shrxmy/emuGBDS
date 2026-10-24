@@ -278,6 +278,8 @@ bool Core::Reset(std::string& error) {
     } else {
         arm9_.state().r[15] = bus_.HasBios9() ? MemoryBus::kArm9BiosBase : MemoryBus::kMainRamBase;
         arm7_.state().r[15] = bus_.HasBios7() ? 0u : MemoryBus::kMainRamBase;
+        // BIOS boot: both CPUs start at their reset vectors and run the real BIOS and firmware.
+        cpus_active_ = boot_mode_ == core::DsBootMode::Bios && bus_.HasBios9() && bus_.HasBios7();
     }
 
     running_ = configured_;

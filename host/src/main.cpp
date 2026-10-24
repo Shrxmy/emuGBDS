@@ -44,7 +44,7 @@ void PrintUsage() {
     std::cout
         << "emuGBDS - unified DS/GBA host prototype\n"
         << "Usage:\n"
-        << "  emugbds [--mode auto|ds|gba] [--gba-core auto|internal] [--nds <rom.nds>] [--gba <rom.gba>] [--slot2 <rom.gba>] [--bios-gba <bios.bin>] [--no-bios-gba] [--bios-nds7 <biosnds7.bin>] [--bios-nds9 <biosnds9.bin>] [--firmware-nds <firmware.bin>] [--boot-mode auto|ds-firmware|direct] [--trace-transition] [--frames N] [--interactive] [--uncapped] [--debug-stats]\n";
+        << "  emugbds [--mode auto|ds|gba] [--gba-core auto|internal] [--nds <rom.nds>] [--gba <rom.gba>] [--slot2 <rom.gba>] [--bios-gba <bios.bin>] [--no-bios-gba] [--bios-nds7 <biosnds7.bin>] [--bios-nds9 <biosnds9.bin>] [--firmware-nds <firmware.bin>] [--boot-mode auto|ds-firmware|direct|bios] [--trace-transition] [--frames N] [--interactive] [--uncapped] [--debug-stats]\n";
 }
 
 bool ParseMode(const std::string& text, emugbds::core::ModeHint& out_mode) {
@@ -74,6 +74,10 @@ bool ParseDsBootMode(const std::string& text, emugbds::core::DsBootMode& out_mod
     }
     if (text == "direct") {
         out_mode = emugbds::core::DsBootMode::Direct;
+        return true;
+    }
+    if (text == "bios") {
+        out_mode = emugbds::core::DsBootMode::Bios;
         return true;
     }
     return false;
@@ -471,7 +475,7 @@ void PrintDsBringUpReport(const emugbds::inds::Core& core) {
         }
         std::cout << "\n";
     };
-    const auto print_cpu = [&](const char* name, const emugbds::arm::ArmCpu& cpu, const emugbds::inds::AccessLog& log) {
+    const auto print_cpu = [&](const char* name, const emugbds::arm::ArmCpu& cpu, const emugbds::inds::AccessLog& log, int index) {
         const auto& state = cpu.state();
         const auto& stats = cpu.unsupported_arm_stats();
         std::cout << "DS " << name << ": PC=0x" << std::hex << std::setw(8) << std::setfill('0') << state.r[15]
@@ -481,10 +485,14 @@ void PrintDsBringUpReport(const emugbds::inds::Core& core) {
                   << " block=" << stats.block_transfer << " swi=" << stats.software_interrupt << ")\n";
         print_top("reads", log.reads);
         print_top("writes", log.writes);
+        const auto& io = core.memory().io();
+        std::cout << "  IME=" << io.ime(index) << " IE=0x" << std::hex << std::setw(8) << io.ie(index)
+                  << " IF=0x" << std::setw(8) << io.iflags(index) << std::dec << "\n";
     };
-    print_cpu("ARM9", core.arm9_cpu(), core.memory().arm9_unmapped());
+    print_cpu("ARM9", core.arm9_cpu(), core.memory().arm9_unmapped(), 0);
     std::cout << "  ARM9 halted (CP15 wait for interrupt): " << (core.arm9_halted() ? "yes" : "no") << "\n";
-    print_cpu("ARM7", core.arm7_cpu(), core.memory().arm7_unmapped());
+    print_cpu("ARM7", core.arm7_cpu(), core.memory().arm7_unmapped(), 1);
+    std::cout << "  ARM7 halted (HALTCNT): " << (core.arm7_halted() ? "yes" : "no") << "\n";
 }
 
 } // namespace

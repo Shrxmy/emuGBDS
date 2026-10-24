@@ -14,6 +14,8 @@ const char* DsBootModeName(DsBootMode mode) {
         return "ds-firmware";
     case DsBootMode::Direct:
         return "direct";
+    case DsBootMode::Bios:
+        return "bios";
     }
     return "unknown";
 }

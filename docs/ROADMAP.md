@@ -36,8 +36,11 @@ Goal: progress from scaffold to executable ARM9/ARM7 instruction core.
 2. Done: ARM9/ARM7 memory maps with TCM (CP15) and WRAMCNT; direct boot.
 3. Done: interrupt controllers, IPC sync/FIFO, timers, DMA, LCD timing,
    HALTCNT GBA mode as the real DS -> GBA transition.
-4. Next: boot the real BIOS and firmware (SPI flash/power/touch, RTC, empty
-   cartridge slot) so the firmware itself hands Slot-2 GBA games to the GBA core.
+4. In progress: boot the real BIOS and firmware (`--boot-mode bios`). Done:
+   empty cartridge slot, SPI (firmware flash, power management), RTC, math
+   unit, RCNT, sound register storage. The firmware now runs to its first
+   screens and idles waiting for input. Next: 2D video to see the menu and
+   touch/button input to pick GBA, so the firmware itself writes HALTCNT.
 5. Then: 2D engines, then 3D and sound.
 6. Keep Slot-2 transition support as an integration target.
 

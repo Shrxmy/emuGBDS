@@ -18,8 +18,22 @@ namespace emugbds::inds {
 // I/O ports and memory regions that are not emulated yet, counted per address
 // (I/O) or per 64 KiB block (memory) so bring-up reports show what a game needs.
 struct AccessLog {
+    // Past this many distinct keys (a runaway program touching everything), new
+    // keys are counted under kOverflowKey so the log stays small.
+    static constexpr size_t kMaxKeys = 4096u;
+    static constexpr uint32_t kOverflowKey = 0xFFFFFFFFu;
+
     std::map<uint32_t, uint64_t> reads;
     std::map<uint32_t, uint64_t> writes;
+
+    static void Count(std::map<uint32_t, uint64_t>& counts, uint32_t key) {
+        const auto it = counts.find(key);
+        if (it != counts.end()) {
+            ++it->second;
+        } else {
+            ++counts[counts.size() < kMaxKeys ? key : kOverflowKey];
+        }
+    }
 };
 
 class MemoryBus {
@@ -51,6 +65,8 @@ public:
     bool HasNdsRom() const noexcept { return !nds_rom_.empty(); }
     bool HasSlot2Rom() const noexcept { return !slot2_rom_.empty(); }
     const std::vector<uint8_t>& nds_rom() const noexcept { return nds_rom_; }
+    // The firmware flash contents; SPI writes change this copy, never the file.
+    std::vector<uint8_t>& firmware_image() noexcept { return firmware_; }
 
     // Clears RAM and TCM and restores power-on I/O, WRAMCNT, and CP15; loaded images stay.
     void ResetMemory();

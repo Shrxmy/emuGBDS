@@ -18,6 +18,11 @@ constexpr uint32_t kIpcSync = 0x04000180u;
 constexpr uint32_t kIpcFifoCnt = 0x04000184u;
 constexpr uint32_t kIpcFifoSend = 0x04000188u;
 constexpr uint32_t kIpcFifoRecv = 0x04100000u;
+constexpr uint32_t kCardFirst = 0x040001A0u;  // AUXSPI, ROMCTRL, command, KEY2 seeds
+constexpr uint32_t kCardLast = 0x040001B8u;
+constexpr uint32_t kCardRomCtrl = 0x040001A4u;
+constexpr uint32_t kCardData = 0x04100010u;
+constexpr uint32_t kSpi = 0x040001C0u;       // SPICNT | SPIDATA << 16 (ARM7)
 constexpr uint32_t kExmem = 0x04000204u;      // EXMEMCNT | WIFIWAITCNT << 16 (ARM7)
 constexpr uint32_t kIme = 0x04000208u;
 constexpr uint32_t kIe = 0x04000210u;
@@ -27,6 +32,12 @@ constexpr uint32_t kVramCntEG = 0x04000244u;  // ARM9 VRAMCNT_E-G | WRAMCNT << 2
 constexpr uint32_t kVramCntHI = 0x04000248u;  // ARM9 VRAMCNT_H-I
 constexpr uint32_t kPostFlg = 0x04000300u;    // POSTFLG | HALTCNT << 8 (ARM7)
 constexpr uint32_t kPowCnt = 0x04000304u;
+constexpr uint32_t kRtc = 0x04000138u;       // ARM7 RTC lines (low half)
+constexpr uint32_t kMathFirst = 0x04000280u; // ARM9 divider and square root
+constexpr uint32_t kMathLast = 0x040002BCu;
+constexpr uint32_t kSoundFirst = 0x04000400u; // ARM7 sound channels, control, bias, capture
+constexpr uint32_t kSoundLast = 0x0400051Cu;
+constexpr uint32_t kSoundCaptureCnt = 0x04000508u;
 
 constexpr uint16_t kDispStatWritable = 0xFFB8u; // IRQ enables, LYC bit 8, LYC
 constexpr uint16_t kKeysReleased = 0x03FFu;
@@ -43,10 +54,16 @@ void Io::Reset() {
     }
     cpus_[1].powcnt = 0x0001u; // POWCNT2: speakers on at power-up
     ipc_.Reset();
+    card_.Reset();
+    spi_.Reset();
+    math_.Reset();
+    rtc_.Reset();
+    sound_ = {};
     dma_fill_ = {};
     vramcnt_ = {};
     exmem_shared_ = 0u;
     wifiwaitcnt_ = 0u;
+    rcnt_ = 0u;
     vcount_ = 0u;
     arm7_halt_requested_ = false;
     gba_mode_requested_ = false;
@@ -77,6 +94,29 @@ bool Io::ReadWord(int cpu, uint32_t address, uint32_t mask, uint32_t& value) {
         value = self.timers.ReadWord(address - kTimerFirst);
         return true;
     }
+    if (address >= kCardFirst && address <= kCardLast) {
+        value = cpu == CardOwner() ? card_.ReadWord(address - kCardFirst) : 0u; // EXMEMCNT gives the slot to one CPU
+        return true;
+    }
+    if (address == kCardData) {
+        if (cpu == CardOwner()) {
+            value = card_.ReadData();
+            RaiseCardIrq();
+        }
+        return true;
+    }
+    if (address == kSpi && cpu == 1) {
+        value = spi_.ReadWord();
+        return true;
+    }
+    if (cpu == 0 && address >= kMathFirst && address <= kMathLast) {
+        value = math_.ReadWord(address - kMathFirst);
+        return true;
+    }
+    if (cpu == 1 && address >= kSoundFirst && address <= kSoundLast) {
+        value = sound_[(address - kSoundFirst) / 4u];
+        return true;
+    }
     switch (address) {
     case kDispStat:
         value = self.dispstat | (static_cast<uint32_t>(vcount_) << 16u);
@@ -88,8 +128,11 @@ bool Io::ReadWord(int cpu, uint32_t address, uint32_t mask, uint32_t& value) {
         if (cpu != 1) {
             return false;
         }
-        value = static_cast<uint32_t>(kExtKeysReleased) << 16u;
-        return (mask & 0x0000FFFFu) == 0u; // RCNT (serial port) is not emulated.
+        value = rcnt_ | (static_cast<uint32_t>(kExtKeysReleased) << 16u);
+        return true;
+    case kRtc:
+        value = rtc_.Read();
+        return cpu == 1;
     case kIpcSync:
         value = ipc_.ReadSync(cpu);
         return true;
@@ -153,6 +196,36 @@ bool Io::WriteWord(int cpu, uint32_t address, uint32_t value, uint32_t mask) {
         self.timers.WriteWord(address - kTimerFirst, value, mask);
         return true;
     }
+    if (address >= kCardFirst && address <= kCardLast) {
+        if (cpu != CardOwner()) {
+            return true; // The other CPU has the slot.
+        }
+        card_.WriteWord(address - kCardFirst, value, mask);
+        if (address == kCardRomCtrl) {
+            PumpCardDma();
+        }
+        return true;
+    }
+    if (address == kSpi && cpu == 1) {
+        if (spi_.WriteWord(value, mask, memory_.firmware_image())) {
+            self.iflags |= Spi::kIrq;
+        }
+        return true;
+    }
+    if (cpu == 0 && address >= kMathFirst && address <= kMathLast) {
+        math_.WriteWord(address - kMathFirst, value, mask);
+        return true;
+    }
+    if (cpu == 1 && address >= kSoundFirst && address <= kSoundLast) {
+        uint32_t& word = sound_[(address - kSoundFirst) / 4u];
+        word = Merge(word, value, mask);
+        if (address < kSoundFirst + 0x100u && (address & 0xFu) == 0u) {
+            word &= ~(1u << 31); // SOUNDxCNT start/busy
+        } else if (address == kSoundCaptureCnt) {
+            word &= ~0x8080u;    // SNDCAPxCNT start/busy
+        }
+        return true;
+    }
     switch (address) {
     case kDispStat:
         self.dispstat = static_cast<uint16_t>(Merge(self.dispstat, value, mask & kDispStatWritable));
@@ -160,6 +233,20 @@ bool Io::WriteWord(int cpu, uint32_t address, uint32_t value, uint32_t mask) {
         return true; // VCOUNT writes (for linked consoles) are ignored.
     case kKeyInput:
         self.keycnt = static_cast<uint16_t>(Merge(self.keycnt, value >> 16u, (mask >> 16u) & 0xC3FFu));
+        return true;
+    case kRcntExtKey:
+        if (cpu != 1) {
+            return false;
+        }
+        rcnt_ = static_cast<uint16_t>(Merge(rcnt_, value, mask & 0xFFFFu));
+        return true; // EXTKEYIN is read-only.
+    case kRtc:
+        if (cpu != 1) {
+            return false;
+        }
+        if ((mask & 0xFFFFu) != 0u) {
+            rtc_.Write(static_cast<uint16_t>(value), static_cast<uint16_t>(mask));
+        }
         return true;
     case kIpcSync:
         ipc_.WriteSync(cpu, value, mask);
@@ -308,6 +395,8 @@ void Io::WriteDma(int cpu, uint32_t channel_index, uint32_t field, uint32_t valu
     channel.internal_count = channel.control & count_bits;
     if (DmaStartMode(cpu, channel.control) == 0u) {
         RunDma(cpu, channel_index);
+    } else if (cpu == CardOwner() && DmaStartMode(cpu, channel.control) == (cpu == 0 ? 5u : 2u)) {
+        PumpCardDma(); // Card data may already be waiting.
     }
 }
 
@@ -345,6 +434,35 @@ void Io::RunDma(int cpu, uint32_t channel_index) {
         }
     } else {
         channel.control &= ~kDmaEnable;
+    }
+}
+
+
+void Io::PumpCardDma() {
+    // One DMA run per ready card word; the DMA itself reads 4100010h, so this loops instead of recursing.
+    const int owner = CardOwner();
+    const uint32_t mode = owner == 0 ? 5u : 2u;
+    while (card_.data_ready()) {
+        const uint32_t words_before = card_.words_remaining();
+        bool ran = false;
+        for (uint32_t channel = 0u; channel < 4u && !ran; ++channel) {
+            const uint32_t control = cpus_[owner].dma[channel].control;
+            if ((control & kDmaEnable) != 0u && DmaStartMode(owner, control) == mode) {
+                RunDma(owner, channel);
+                ran = true;
+            }
+        }
+        if (!ran || card_.words_remaining() == words_before) {
+            break; // No card DMA (the CPU reads the port itself), or one that does not read 4100010h.
+        }
+    }
+    RaiseCardIrq();
+}
+
+
+void Io::RaiseCardIrq() noexcept {
+    if (card_.ConsumeTransferIrq()) {
+        cpus_[CardOwner()].iflags |= GameCard::kTransferIrq;
     }
 }
 

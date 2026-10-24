@@ -21,6 +21,8 @@ enum class DsBootMode {
     Auto,
     DsFirmware,
     Direct,
+    // Run the real ARM9/ARM7 BIOS and firmware from reset (in bring-up).
+    Bios,
 };
 
 struct BootRequest {
