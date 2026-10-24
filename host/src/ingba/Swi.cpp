@@ -1,38 +1,38 @@
 #include "emugbds/ingba/Core.h"
-#include "emugbds/ingba/CpuConstants.h"
-#include "emugbds/ingba/DebugTrace.h"
+#include "emugbds/arm/CpuConstants.h"
+#include "emugbds/arm/DebugTrace.h"
 #include "emugbds/ingba/MemoryConstants.h"
 #include "emugbds/ingba/VideoConstants.h"
 #include <cmath>
 
 namespace emugbds::ingba {
 
-bool Core::ExecuteSoftwareInterrupt(uint8_t swi_imm, uint32_t next_pc, bool from_thumb, std::string& error) {
+bool Core::OnSoftwareInterrupt(uint8_t swi_imm, uint32_t next_pc, bool from_thumb, std::string& error) {
     if (bus_.HasBios()) {
         // The BIOS SWI dispatcher extracts a Thumb SWI immediate from
         // [SVC_LR - 2]. For a Thumb SWI, SVC LR is the ordinary next
         // instruction address (the restored CPSR supplies the Thumb state),
         // not an address with bit 0 set.
         const uint32_t return_address = next_pc;
-        EnterException(kCpuModeSupervisor, kSwiVectorAddress, false, return_address, true);
+        cpu_.EnterException(arm::kCpuModeSupervisor, arm::kSwiVectorAddress, false, return_address, true);
         return true;
     }
 
-    const uint32_t saved_cpsr = cpu_.cpsr;
-    WriteSpsrForMode(kCpuModeSupervisor, saved_cpsr);
-    uint32_t svc_cpsr = (saved_cpsr & ~kCpuModeMask) | kCpuModeSupervisor;
-    svc_cpsr |= kCpsrIrqDisableBit;
-    svc_cpsr &= ~kCpsrThumbBit;
-    WriteCpsr(svc_cpsr);
-    cpu_.r[14] = next_pc | (from_thumb ? 1u : 0u);
+    const uint32_t saved_cpsr = cpu_.state().cpsr;
+    cpu_.WriteSpsrForMode(arm::kCpuModeSupervisor, saved_cpsr);
+    uint32_t svc_cpsr = (saved_cpsr & ~arm::kCpuModeMask) | arm::kCpuModeSupervisor;
+    svc_cpsr |= arm::kCpsrIrqDisableBit;
+    svc_cpsr &= ~arm::kCpsrThumbBit;
+    cpu_.WriteCpsr(svc_cpsr);
+    cpu_.state().r[14] = next_pc | (from_thumb ? 1u : 0u);
 
     const bool handled = HandleSoftwareInterrupt(swi_imm, error);
 
-    WriteCpsr(saved_cpsr);
-    SetThumbState(from_thumb);
-    const uint32_t old_pc = cpu_.r[15];
-    cpu_.r[15] = next_pc & (from_thumb ? ~1u : ~3u);
-    RecordPcFlowEvent("SWI.RETURN", old_pc, cpu_.r[15], static_cast<uint32_t>(swi_imm), cpu_.cpsr, cpu_.r[14], cpu_.r[13], frame_counter_);
+    cpu_.WriteCpsr(saved_cpsr);
+    cpu_.SetThumbState(from_thumb);
+    const uint32_t old_pc = cpu_.state().r[15];
+    cpu_.state().r[15] = next_pc & (from_thumb ? ~1u : ~3u);
+    arm::RecordPcFlowEvent("SWI.RETURN", old_pc, cpu_.state().r[15], static_cast<uint32_t>(swi_imm), cpu_.state().cpsr, cpu_.state().r[14], cpu_.state().r[13], frame_counter_);
     return handled;
 }
 
@@ -43,10 +43,10 @@ bool Core::HandleSoftwareInterrupt(uint8_t swi_imm, std::string& error) {
         if (!Reset(error)) {
             return false;
         }
-        cpu_.r[15] = rom_loaded_ ? kRomBase : kBiosBase;
+        cpu_.state().r[15] = rom_loaded_ ? kRomBase : kBiosBase;
         return true;
     case 0x01: { // RegisterRamReset
-        const uint32_t flags = cpu_.r[0] & 0xFFu;
+        const uint32_t flags = cpu_.state().r[0] & 0xFFu;
         if ((flags & 0x01u) != 0u) {
             for (uint32_t offset = 0u; offset < 0x40000u; offset += 4u) {
                 bus_.Write32(kEwramBase + offset, 0u);
@@ -86,7 +86,7 @@ bool Core::HandleSoftwareInterrupt(uint8_t swi_imm, std::string& error) {
     case 0x2A: // SoundDriverJmpTableCopy
         return true;
     case 0x0D: // GetBiosChecksum
-        cpu_.r[0] = 0xBAAE187Fu;
+        cpu_.state().r[0] = 0xBAAE187Fu;
         return true;
     case 0x0E: // BgAffineSet
         return ExecuteBgAffineSet();
@@ -95,42 +95,42 @@ bool Core::HandleSoftwareInterrupt(uint8_t swi_imm, std::string& error) {
     case 0x05: // VBlankIntrWait
         return ExecuteIntrWait(true, error);
     case 0x06: { // Div
-        const int64_t numerator = static_cast<int64_t>(static_cast<int32_t>(cpu_.r[0]));
-        const int64_t denominator = static_cast<int64_t>(static_cast<int32_t>(cpu_.r[1]));
+        const int64_t numerator = static_cast<int64_t>(static_cast<int32_t>(cpu_.state().r[0]));
+        const int64_t denominator = static_cast<int64_t>(static_cast<int32_t>(cpu_.state().r[1]));
         if (denominator == 0) {
-            cpu_.r[0] = 0u;
-            cpu_.r[1] = static_cast<uint32_t>(numerator);
-            cpu_.r[3] = 0u;
+            cpu_.state().r[0] = 0u;
+            cpu_.state().r[1] = static_cast<uint32_t>(numerator);
+            cpu_.state().r[3] = 0u;
             return true;
         }
         const int64_t quotient = numerator / denominator;
         const int64_t remainder = numerator % denominator;
-        cpu_.r[0] = static_cast<uint32_t>(quotient);
-        cpu_.r[1] = static_cast<uint32_t>(remainder);
+        cpu_.state().r[0] = static_cast<uint32_t>(quotient);
+        cpu_.state().r[1] = static_cast<uint32_t>(remainder);
         const int64_t abs_quotient = quotient < 0 ? -quotient : quotient;
-        cpu_.r[3] = static_cast<uint32_t>(abs_quotient);
+        cpu_.state().r[3] = static_cast<uint32_t>(abs_quotient);
         return true;
     }
     case 0x07: { // DivArm (r0=denominator, r1=numerator)
-        const int64_t denominator = static_cast<int64_t>(static_cast<int32_t>(cpu_.r[0]));
-        const int64_t numerator = static_cast<int64_t>(static_cast<int32_t>(cpu_.r[1]));
+        const int64_t denominator = static_cast<int64_t>(static_cast<int32_t>(cpu_.state().r[0]));
+        const int64_t numerator = static_cast<int64_t>(static_cast<int32_t>(cpu_.state().r[1]));
         if (denominator == 0) {
-            cpu_.r[0] = 0u;
-            cpu_.r[1] = static_cast<uint32_t>(numerator);
-            cpu_.r[3] = 0u;
+            cpu_.state().r[0] = 0u;
+            cpu_.state().r[1] = static_cast<uint32_t>(numerator);
+            cpu_.state().r[3] = 0u;
             return true;
         }
         const int64_t quotient = numerator / denominator;
         const int64_t remainder = numerator % denominator;
-        cpu_.r[0] = static_cast<uint32_t>(quotient);
-        cpu_.r[1] = static_cast<uint32_t>(remainder);
+        cpu_.state().r[0] = static_cast<uint32_t>(quotient);
+        cpu_.state().r[1] = static_cast<uint32_t>(remainder);
         const int64_t abs_quotient = quotient < 0 ? -quotient : quotient;
-        cpu_.r[3] = static_cast<uint32_t>(abs_quotient);
+        cpu_.state().r[3] = static_cast<uint32_t>(abs_quotient);
         return true;
     }
     case 0x08: { // Sqrt
-        const double root = std::sqrt(static_cast<double>(cpu_.r[0]));
-        cpu_.r[0] = static_cast<uint32_t>(root);
+        const double root = std::sqrt(static_cast<double>(cpu_.state().r[0]));
+        cpu_.state().r[0] = static_cast<uint32_t>(root);
         return true;
     }
     case 0x0B: // CpuSet
@@ -154,9 +154,9 @@ bool Core::HandleSoftwareInterrupt(uint8_t swi_imm, std::string& error) {
 
 
 bool Core::ExecuteCpuSet(bool fast) {
-    const uint32_t source = cpu_.r[0];
-    const uint32_t destination = cpu_.r[1];
-    const uint32_t control = cpu_.r[2];
+    const uint32_t source = cpu_.state().r[0];
+    const uint32_t destination = cpu_.state().r[1];
+    const uint32_t control = cpu_.state().r[2];
     const bool fill = (control & (1u << 24)) != 0u;
 
     if (fast) {
@@ -228,15 +228,15 @@ bool Core::ExecuteCpuSet(bool fast) {
 bool Core::ExecuteIntrWait(bool force_vblank, std::string& error) {
     (void)error;
     if (force_vblank) {
-        cpu_.r[0] = 1u;
-        cpu_.r[1] = 1u;
+        cpu_.state().r[0] = 1u;
+        cpu_.state().r[1] = 1u;
     }
 
-    uint16_t mask = static_cast<uint16_t>(cpu_.r[1] & 0x3FFFu);
+    uint16_t mask = static_cast<uint16_t>(cpu_.state().r[1] & 0x3FFFu);
     if (mask == 0u) {
         mask = 0x0001u;
     }
-    const bool discard_old = (cpu_.r[0] & 0x1u) != 0u;
+    const bool discard_old = (cpu_.state().r[0] & 0x1u) != 0u;
 
     uint16_t iflags = bus_.Read16(kInterruptFlagAddress);
     if (discard_old) {
@@ -269,9 +269,9 @@ bool Core::ExecuteIntrWait(bool force_vblank, std::string& error) {
 
 
 bool Core::ExecuteBgAffineSet() {
-    const uint32_t source = cpu_.r[0];
-    const uint32_t destination = cpu_.r[1];
-    const uint32_t count = cpu_.r[2];
+    const uint32_t source = cpu_.state().r[0];
+    const uint32_t destination = cpu_.state().r[1];
+    const uint32_t count = cpu_.state().r[2];
 
     constexpr double kTwoPi = 6.28318530717958647692;
 
@@ -316,8 +316,8 @@ bool Core::ExecuteBgAffineSet() {
 
 
 bool Core::ExecuteLz77UnComp(bool vram_mode, std::string& error) {
-    const uint32_t source = cpu_.r[0];
-    const uint32_t destination = cpu_.r[1];
+    const uint32_t source = cpu_.state().r[0];
+    const uint32_t destination = cpu_.state().r[1];
     const uint32_t header = bus_.Read32(source);
     if ((header & 0xFFu) != 0x10u) {
         error = "Invalid LZ77 header type in SWI";
@@ -377,8 +377,8 @@ bool Core::ExecuteLz77UnComp(bool vram_mode, std::string& error) {
 
 
 bool Core::ExecuteRlUnComp(bool vram_mode, std::string& error) {
-    const uint32_t source = cpu_.r[0];
-    const uint32_t destination = cpu_.r[1];
+    const uint32_t source = cpu_.state().r[0];
+    const uint32_t destination = cpu_.state().r[1];
     const uint32_t header = bus_.Read32(source);
     if ((header & 0xFFu) != 0x30u) {
         error = "Invalid RL header type in SWI";

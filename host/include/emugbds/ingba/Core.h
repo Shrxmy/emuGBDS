@@ -1,6 +1,6 @@
 #pragma once
 
-#include "emugbds/ingba/CpuState.h"
+#include "emugbds/arm/ArmCpu.h"
 #include "emugbds/ingba/MemoryBus.h"
 
 #include <array>
@@ -12,15 +12,14 @@
 
 namespace emugbds::ingba {
 
-class Core {
+class Core final : public arm::ICpuHost {
 public:
-    struct UnsupportedArmStats {
-        uint64_t generic = 0;
-        uint64_t thumb = 0;
-        uint64_t multiply = 0;
-        uint64_t block_transfer = 0;
-        uint64_t software_interrupt = 0;
-    };
+    using UnsupportedArmStats = arm::ArmCpu::UnsupportedArmStats;
+
+    Core() = default;
+    // cpu_ is bound to this object's bus_ and host; a copy or move would stay bound to the source.
+    Core(const Core&) = delete;
+    Core& operator=(const Core&) = delete;
 
     bool Initialize(std::string& error);
     bool LoadBios(const std::filesystem::path& bios_path, std::string& error);
@@ -46,84 +45,22 @@ public:
     uint64_t dispcnt_write_count() const noexcept;
     uint16_t last_dispcnt_written() const noexcept;
 
-    const CpuState& cpu() const noexcept { return cpu_; }
+    const arm::CpuState& cpu() const noexcept { return cpu_.state(); }
     uint64_t frame_counter() const noexcept { return frame_counter_; }
-    uint64_t unknown_arm_instruction_count() const noexcept { return unknown_arm_instruction_count_; }
-    const UnsupportedArmStats& unsupported_arm_stats() const noexcept { return unsupported_arm_stats_; }
+    uint64_t unknown_arm_instruction_count() const noexcept { return cpu_.unknown_arm_instruction_count(); }
+    const UnsupportedArmStats& unsupported_arm_stats() const noexcept { return cpu_.unsupported_arm_stats(); }
     uint8_t last_unsupported_swi() const noexcept { return last_unsupported_swi_; }
 
+    // arm::ICpuHost: enters the BIOS SWI vector, or emulates the call when no BIOS is loaded.
+    bool OnSoftwareInterrupt(uint8_t swi_imm, uint32_t next_pc, bool from_thumb, std::string& error) override;
+
 private:
-    enum class UnsupportedArmClass {
-        Generic,
-        Thumb,
-        Multiply,
-        BlockTransfer,
-        SoftwareInterrupt,
-    };
-
-    struct AddResult {
-        uint32_t value = 0;
-        bool carry = false;
-        bool overflow = false;
-    };
-
-    bool StepArm(std::string& error);
-    bool ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t fetch_pc, std::string& error);
-    bool ExecuteArmPsrTransfer(uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, std::string& error);
-    bool ExecuteArmDataProcessing(uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, std::string& error);
-    bool ExecuteArmSingleDataTransfer(uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, std::string& error);
-    bool ExecuteArmHalfwordTransfer(uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, std::string& error);
-    bool ExecuteArmMultiply(uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, std::string& error);
-    bool ExecuteArmMultiplyLong(uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, std::string& error);
-    bool ExecuteArmBlockDataTransfer(uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, std::string& error);
-    bool ExecuteArmSoftwareInterrupt(uint32_t instruction, uint32_t next_pc, std::string& error);
-    bool ExecuteSoftwareInterrupt(uint8_t swi_imm, uint32_t next_pc, bool from_thumb, std::string& error);
     bool HandleSoftwareInterrupt(uint8_t swi_imm, std::string& error);
     bool ExecuteCpuSet(bool fast);
     bool ExecuteIntrWait(bool force_vblank, std::string& error);
     bool ExecuteBgAffineSet();
     bool ExecuteLz77UnComp(bool vram_mode, std::string& error);
     bool ExecuteRlUnComp(bool vram_mode, std::string& error);
-    bool HandleUnsupportedArm(UnsupportedArmClass unsupported_class, uint32_t next_pc, std::string& error);
-    void RecordUnsupportedArm(UnsupportedArmClass unsupported_class);
-    const char* DominantUnsupportedClassName() const noexcept;
-    bool DecodeArmOperand2(uint32_t instruction, uint32_t fetch_pc, uint32_t& operand2, bool& shifter_carry) const;
-    uint32_t DecodeShiftedRegister(uint32_t instruction, uint32_t fetch_pc, bool& shifter_carry) const;
-    uint32_t ReadArmRegister(uint32_t reg_index, uint32_t fetch_pc) const;
-    void WriteArmRegister(uint32_t reg_index, uint32_t value);
-    uint32_t ReadArmUserRegister(uint32_t reg_index, uint32_t fetch_pc) const;
-    void WriteArmUserRegister(uint32_t reg_index, uint32_t value);
-    uint32_t ReadThumbRegister(uint32_t reg_index, uint32_t fetch_pc) const;
-    void WriteThumbRegister(uint32_t reg_index, uint32_t value);
-    void SetThumbState(bool enabled) noexcept;
-    void SetNFlag(bool value);
-    void SetZFlag(bool value);
-    void SetCFlag(bool value);
-    void SetVFlag(bool value);
-    void SetNZFlags(uint32_t value);
-    bool ConditionPassed(uint32_t instruction) const;
-    static uint32_t Ror(uint32_t value, uint32_t amount);
-    static AddResult AddWithCarry(uint32_t lhs, uint32_t rhs, bool carry_in);
-    static uint32_t SignExtend24(uint32_t value);
-    static int32_t SignExtend(uint32_t value, uint32_t bits);
-    static bool IsValidCpuMode(uint32_t mode) noexcept;
-    static bool ModeHasSpsr(uint32_t mode) noexcept;
-    uint32_t CurrentMode() const noexcept;
-    bool CurrentModeIsPrivileged() const noexcept;
-    void SaveBankedRegistersForMode(uint32_t mode) noexcept;
-    void RestoreBankedRegistersForMode(uint32_t mode) noexcept;
-    void SwitchCpuMode(uint32_t new_mode) noexcept;
-    uint32_t ReadSpsrForMode(uint32_t mode) const noexcept;
-    void WriteSpsrForMode(uint32_t mode, uint32_t value) noexcept;
-    uint32_t ReadCurrentSpsr() const noexcept;
-    bool WriteCurrentSpsr(uint32_t value) noexcept;
-    void WriteCpsr(uint32_t value) noexcept;
-    void EnterException(
-        uint32_t target_mode,
-        uint32_t handler_address,
-        bool handler_thumb,
-        uint32_t return_address,
-        bool mask_irq) noexcept;
     void ServicePendingInterrupts() noexcept;
     void AdvanceLcdTiming(uint32_t elapsed_cycles) noexcept;
     void CaptureVideoScanlineState(uint16_t scanline) noexcept;
@@ -152,7 +89,7 @@ private:
     std::array<uint32_t, kVideoPixelCount> video_buffer_{};
     std::array<VideoScanlineState, kVideoHeight> video_scanline_states_{};
     MemoryBus bus_{};
-    CpuState cpu_{};
+    arm::ArmCpu cpu_{bus_, *this}; // Declared after bus_, which it references.
     bool initialized_ = false;
     bool rom_loaded_ = false;
     bool halted_ = false;
@@ -161,8 +98,6 @@ private:
     bool in_vcounter_match_ = false;
     uint32_t lcd_cycle_in_frame_ = 0;
     uint64_t frame_counter_ = 0;
-    uint64_t unknown_arm_instruction_count_ = 0;
-    UnsupportedArmStats unsupported_arm_stats_{};
     uint8_t last_unsupported_swi_ = 0;
 };
 

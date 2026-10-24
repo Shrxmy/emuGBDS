@@ -41,29 +41,32 @@ Think of this as the host "OS" for emulator cores.
 - Core API and orchestration:
   - `host/include/emugbds/ingba/Core.h`
   - `host/src/ingba/Core.cpp`
-- CPU state and bank switching:
-  - `host/include/emugbds/ingba/CpuState.h`
-  - `host/src/ingba/CpuState.cpp`
+- Shared ARM CPU (state, bank switching, instruction execution):
+  - `host/include/emugbds/arm/ArmCpu.h`, `CpuState.h`, `Bus.h`
+  - `host/src/arm/ArmCpu.cpp`
+  - `host/src/arm/ArmExecute.cpp`
+  - `host/src/arm/ThumbExecute.cpp`
+- BIOS/SWI emulation:
+  - `host/src/ingba/Swi.cpp`
 - Memory bus, MMIO, timers, DMA, and Flash:
   - `host/include/emugbds/ingba/MemoryBus.h`
   - `host/src/ingba/MemoryBus.cpp`
-- Instruction execution:
-  - `host/src/ingba/ArmExecute.cpp`
-  - `host/src/ingba/ThumbExecute.cpp`
-  - `host/src/ingba/Swi.cpp`
+- Audio:
+  - `host/include/emugbds/ingba/Apu.h`
+  - `host/src/ingba/Apu.cpp`
 - Video composition:
   - `host/src/ingba/Video.cpp`
   - `host/include/emugbds/ingba/VideoConstants.h`
 - Internal constants and diagnostics:
   - `host/include/emugbds/ingba/MemoryConstants.h`
-  - `host/include/emugbds/ingba/CpuConstants.h`
-  - `host/include/emugbds/ingba/DebugTrace.h`
+  - `host/include/emugbds/arm/CpuConstants.h`
+  - `host/include/emugbds/arm/DebugTrace.h`
 
 ### Where to edit for GBA features
 
-- CPU lifecycle, frame stepping, and dispatch: `host/src/ingba/Core.cpp`
-- ARM/Thumb instruction behavior: the corresponding execution unit above
-- CPU modes, banked registers, and exception state: `CpuState.cpp`
+- Frame stepping, IRQ delivery, and HALT: `host/src/ingba/Core.cpp`
+- ARM/Thumb instruction behavior: the corresponding unit in `host/src/arm/`
+- CPU modes, banked registers, and exception state: `host/src/arm/ArmCpu.cpp`
 - RAM/VRAM/IO/DMA/save behavior: `MemoryBus.cpp`
 - Backgrounds, sprites, windows, blending, and pixels: `Video.cpp`
 - Input key state plumbing: adapter + `Core::ApplyInputMasks`

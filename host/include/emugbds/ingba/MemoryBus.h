@@ -1,7 +1,7 @@
 #pragma once
 
+#include "emugbds/arm/Bus.h"
 #include "emugbds/ingba/Apu.h"
-#include "emugbds/ingba/Bus.h"
 
 #include <array>
 #include <cstdint>
@@ -11,7 +11,7 @@
 
 namespace emugbds::ingba {
 
-class MemoryBus final : public IBus {
+class MemoryBus final : public arm::IBus {
 public:
     bool LoadBios(const std::filesystem::path& bios_path, std::string& error);
     bool LoadRom(const std::filesystem::path& rom_path, std::string& error);

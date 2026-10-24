@@ -16,20 +16,33 @@ main.cpp
 - `host/src/main.cpp`: CLI and optional SDL presentation.
 - `host/src/runtime/`: frame loop, input forwarding, and output polling.
 - `host/src/cores/`: adapters implementing the common core interface.
+- `host/src/arm/`: shared ARM CPU interpreter, used by the GBA core and
+  intended for the DS ARM7/ARM9.
 - `host/src/ingba/`: GBA implementation.
 - `host/src/inds/`: DS implementation and current bring-up scaffold.
 - `host/src/boot/`, `host/src/gba/`, and `host/src/nds/`: boot policy and
   cartridge metadata, independent of CPU execution.
 
+## Shared ARM CPU (`arm`)
+
+| Module | Owns |
+| --- | --- |
+| `ArmCpu.cpp` | instruction dispatch, CPU modes, banked registers, CPSR/SPSR, exception entry, diagnostics counters |
+| `ArmExecute.cpp` | ARM instruction families |
+| `ThumbExecute.cpp` | Thumb instruction families |
+
+`ArmCpu` reaches memory only through `arm::IBus` and asks its system for
+SWI handling through `arm::ICpuHost`. Interrupt delivery is the system's job:
+it decides when an IRQ is taken and calls `ArmCpu::EnterException`. Keep
+system-specific behavior (memory maps, BIOS emulation, IRQ registers) out of
+this module.
+
 ## In-house GBA module boundaries
 
 | Module | Owns |
 | --- | --- |
-| `Core.cpp` | reset, frame stepping, instruction dispatch, IRQ/HALT orchestration |
-| `CpuState.cpp` | CPU modes, banked registers, CPSR/SPSR, exceptions, diagnostics counters |
-| `ArmExecute.cpp` | ARM instruction families |
-| `ThumbExecute.cpp` | Thumb instruction families |
-| `Swi.cpp` | BIOS/SWI behavior |
+| `Core.cpp` | reset, frame stepping, IRQ/HALT orchestration, driving the shared `ArmCpu` |
+| `Swi.cpp` | BIOS/SWI behavior (the `ICpuHost` implementation) |
 | `MemoryBus.cpp` | address map, MMIO, timers, DMA, cartridge save device |
 | `Video.cpp` | LCD timing and video composition |
 | `Apu.cpp` | Direct Sound FIFOs and 32768 Hz stereo mixing (PSG channels not yet implemented) |
@@ -40,8 +53,9 @@ coordinate modules rather than grow new device implementations.
 
 ## Build ownership
 
-`EMUGBDS_INHOUSE_GBA_SOURCES` in the root `CMakeLists.txt` is the single source
-of truth for GBA implementation units. Both the application and unit-test
+`EMUGBDS_ARM_CPU_SOURCES` and `EMUGBDS_INHOUSE_GBA_SOURCES` (which includes
+the CPU list) in the root `CMakeLists.txt` are the single source of truth for
+CPU and GBA implementation units. Both the application and unit-test
 executables consume that list to prevent source drift.
 
 ## Workspace policy

@@ -74,10 +74,10 @@ Check:
 
 Then inspect:
 
-- CPU lifecycle and dispatch in `host/src/ingba/Core.cpp`
-- ARM/Thumb execution in `host/src/ingba/ArmExecute.cpp` and `ThumbExecute.cpp`
+- Frame stepping, IRQ delivery, and HALT in `host/src/ingba/Core.cpp`
+- ARM/Thumb execution in `host/src/arm/ArmExecute.cpp` and `ThumbExecute.cpp`
 - SWI behavior in `host/src/ingba/Swi.cpp`
-- CPU state and exception banking in `host/src/ingba/CpuState.cpp`
+- CPU state and exception banking in `host/src/arm/ArmCpu.cpp`
 - DMA and IO in `host/src/ingba/MemoryBus.cpp`
 - Video state and composition in `host/src/ingba/Video.cpp`
 

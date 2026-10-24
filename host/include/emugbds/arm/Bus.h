@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace emugbds::ingba {
+namespace emugbds::arm {
 
 class IBus {
 public:
@@ -16,4 +16,4 @@ public:
     virtual void Write32(uint32_t address, uint32_t value) = 0;
 };
 
-} // namespace emugbds::ingba
+} // namespace emugbds::arm

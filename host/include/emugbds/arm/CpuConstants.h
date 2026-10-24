@@ -1,10 +1,10 @@
 #pragma once
 
-// CPU mode and status-register constants for the in-house GBA core.
+// CPU mode and status-register constants shared by the in-house ARM cores.
 
 #include <cstdint>
 
-namespace emugbds::ingba {
+namespace emugbds::arm {
 
 inline constexpr uint32_t kSwiVectorAddress = 0x00000008u;
 inline constexpr uint32_t kCpuModeMask = 0x1Fu;
@@ -18,4 +18,4 @@ inline constexpr uint32_t kCpuModeSystem = 0x1Fu;
 inline constexpr uint32_t kCpsrThumbBit = 1u << 5u;
 inline constexpr uint32_t kCpsrIrqDisableBit = 1u << 7u;
 
-} // namespace emugbds::ingba
+} // namespace emugbds::arm

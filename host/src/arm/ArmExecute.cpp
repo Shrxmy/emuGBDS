@@ -1,10 +1,10 @@
-#include "emugbds/ingba/Core.h"
-#include "emugbds/ingba/CpuConstants.h"
-#include "emugbds/ingba/DebugTrace.h"
+#include "emugbds/arm/ArmCpu.h"
+#include "emugbds/arm/CpuConstants.h"
+#include "emugbds/arm/DebugTrace.h"
 
-namespace emugbds::ingba {
+namespace emugbds::arm {
 
-bool Core::ExecuteArmDataProcessing(
+bool ArmCpu::ExecuteArmDataProcessing(
     uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, std::string& error) {
     (void)error;
     const uint32_t opcode = (instruction >> 21) & 0xFu;
@@ -149,10 +149,10 @@ bool Core::ExecuteArmDataProcessing(
                 : (result & ~3u);
             WriteCpsr(spsr);
             cpu_.r[15] = restored_pc;
-            RecordPcFlowEvent("ARM.DP.PC", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], frame_counter_);
+            RecordPcFlowEvent("ARM.DP.PC", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
 #ifndef NDEBUG
             if (mode_before_restore == kCpuModeIrq) {
-                ReportFirstIrqReturn(frame_counter_, old_pc, instruction, cpu_.r[15], spsr, exception_lr);
+                ReportFirstIrqReturn(trace_frame_, old_pc, instruction, cpu_.r[15], spsr, exception_lr);
             }
 #endif
             return true;
@@ -160,7 +160,7 @@ bool Core::ExecuteArmDataProcessing(
 
         WriteArmRegister(rd, result);
         if (rd == 15u) {
-            RecordPcFlowEvent("ARM.DP.PC", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], frame_counter_);
+            RecordPcFlowEvent("ARM.DP.PC", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
             return true;
         }
     }
@@ -170,7 +170,7 @@ bool Core::ExecuteArmDataProcessing(
 }
 
 
-bool Core::ExecuteArmPsrTransfer(
+bool ArmCpu::ExecuteArmPsrTransfer(
     uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, std::string& error) {
     (void)error;
     const bool is_mrs = (instruction & 0x0FBF0FFFu) == 0x010F0000u;
@@ -252,7 +252,7 @@ bool Core::ExecuteArmPsrTransfer(
 }
 
 
-bool Core::ExecuteArmSingleDataTransfer(
+bool ArmCpu::ExecuteArmSingleDataTransfer(
     uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, std::string& error) {
     (void)error;
     const bool immediate_offset = (instruction & (1u << 25)) == 0;
@@ -294,7 +294,7 @@ bool Core::ExecuteArmSingleDataTransfer(
         const uint32_t old_pc = cpu_.r[15];
         WriteArmRegister(rd, value);
         if (rd == 15u) {
-            RecordPcFlowEvent("ARM.LDR.PC", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], frame_counter_);
+            RecordPcFlowEvent("ARM.LDR.PC", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
             if (!pre_index || write_back) {
                 WriteArmRegister(rn, updated_base);
             }
@@ -318,7 +318,7 @@ bool Core::ExecuteArmSingleDataTransfer(
 }
 
 
-bool Core::ExecuteArmHalfwordTransfer(
+bool ArmCpu::ExecuteArmHalfwordTransfer(
     uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, std::string& error) {
     (void)error;
     const bool pre_index = (instruction & (1u << 24)) != 0u;
@@ -378,7 +378,7 @@ bool Core::ExecuteArmHalfwordTransfer(
         const uint32_t old_pc = cpu_.r[15];
         WriteArmRegister(rd, value);
         if (rd == 15u) {
-            RecordPcFlowEvent("ARM.LDRH.PC", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], frame_counter_);
+            RecordPcFlowEvent("ARM.LDRH.PC", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
             if (!pre_index || write_back) {
                 WriteArmRegister(rn, updated_base);
             }
@@ -394,7 +394,7 @@ bool Core::ExecuteArmHalfwordTransfer(
 }
 
 
-bool Core::ExecuteArmMultiply(
+bool ArmCpu::ExecuteArmMultiply(
     uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, std::string& error) {
     (void)error;
     const bool accumulate = (instruction & (1u << 21)) != 0u;
@@ -430,7 +430,7 @@ bool Core::ExecuteArmMultiply(
 }
 
 
-bool Core::ExecuteArmMultiplyLong(
+bool ArmCpu::ExecuteArmMultiplyLong(
     uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, std::string& error) {
     (void)error;
     const bool signed_multiply = (instruction & (1u << 22)) != 0u;
@@ -476,7 +476,7 @@ bool Core::ExecuteArmMultiplyLong(
 }
 
 
-bool Core::ExecuteArmBlockDataTransfer(
+bool ArmCpu::ExecuteArmBlockDataTransfer(
     uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, std::string& error) {
     (void)error;
     const bool pre_index = (instruction & (1u << 24)) != 0u;
@@ -557,7 +557,7 @@ bool Core::ExecuteArmBlockDataTransfer(
         } else {
             cpu_.r[15] = loaded_pc_value & ~3u;
         }
-        RecordPcFlowEvent("ARM.LDM.PC", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], frame_counter_);
+        RecordPcFlowEvent("ARM.LDM.PC", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
     } else {
         cpu_.r[15] = next_pc;
     }
@@ -565,10 +565,10 @@ bool Core::ExecuteArmBlockDataTransfer(
 }
 
 
-bool Core::ExecuteArmSoftwareInterrupt(uint32_t instruction, uint32_t next_pc, std::string& error) {
+bool ArmCpu::ExecuteArmSoftwareInterrupt(uint32_t instruction, uint32_t next_pc, std::string& error) {
     const uint8_t swi_imm = static_cast<uint8_t>(instruction & 0xFFu);
     return ExecuteSoftwareInterrupt(swi_imm, next_pc, false, error);
 }
 
 
-} // namespace emugbds::ingba
+} // namespace emugbds::arm

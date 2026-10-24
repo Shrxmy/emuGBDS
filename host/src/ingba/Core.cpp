@@ -1,6 +1,6 @@
 #include "emugbds/ingba/Core.h"
-#include "emugbds/ingba/CpuConstants.h"
-#include "emugbds/ingba/DebugTrace.h"
+#include "emugbds/arm/CpuConstants.h"
+#include "emugbds/arm/DebugTrace.h"
 #include "emugbds/ingba/MemoryConstants.h"
 #include "emugbds/ingba/VideoConstants.h"
 
@@ -12,8 +12,6 @@ bool Core::Initialize(std::string& error) {
     (void)error;
     initialized_ = true;
     frame_counter_ = 0;
-    unknown_arm_instruction_count_ = 0;
-    unsupported_arm_stats_ = {};
     last_unsupported_swi_ = 0u;
     halted_ = false;
     return Reset(error);
@@ -47,6 +45,7 @@ bool Core::RunFrame(std::string& error) {
 
     uint32_t cycles = 0;
     bus_.apu().ClearSamples();
+    cpu_.set_trace_frame(frame_counter_);
     AdvanceLcdTiming(lcd_cycle_in_frame_);
     while (cycles < kCyclesPerFrame) {
         if (halted_) {
@@ -61,28 +60,30 @@ bool Core::RunFrame(std::string& error) {
         }
         if (!halted_) {
 #ifndef NDEBUG
-            const uint32_t pre_step_pc = cpu_.r[15];
-            const uint32_t pre_step_instr = cpu_.thumb
+            const uint32_t pre_step_pc = cpu_.state().r[15];
+            const uint32_t pre_step_instr = cpu_.state().thumb
                 ? static_cast<uint32_t>(bus_.Read16(pre_step_pc))
                 : bus_.Read32(pre_step_pc);
-            const uint32_t pre_step_cpsr = cpu_.cpsr;
+            const uint32_t pre_step_cpsr = cpu_.state().cpsr;
 #endif
-            if (!StepArm(error)) {
+            cpu_.state().thumb = (cpu_.state().cpsr & arm::kCpsrThumbBit) != 0u;
+            ServicePendingInterrupts();
+            if (!cpu_.Step(error)) {
                 return false;
             }
             if (bus_.ConsumeHaltRequest()) {
                 halted_ = true;
             }
 #ifndef NDEBUG
-            const uint32_t post_step_pc = cpu_.r[15];
-            if (!IsOpenBusPc(pre_step_pc) && IsOpenBusPc(post_step_pc)) {
-                ReportFirstPcEscape(
+            const uint32_t post_step_pc = cpu_.state().r[15];
+            if (!arm::IsOpenBusPc(pre_step_pc) && arm::IsOpenBusPc(post_step_pc)) {
+                arm::ReportFirstPcEscape(
                     frame_counter_,
                     pre_step_pc,
                     post_step_pc,
                     pre_step_instr,
                     pre_step_cpsr,
-                    (pre_step_cpsr & kCpsrThumbBit) != 0u,
+                    (pre_step_cpsr & arm::kCpsrThumbBit) != 0u,
                     bus_.Read32(kIrqCallbackAddress),
                     bus_.Read16(kInterruptEnableAddress),
                     bus_.Read16(kInterruptMasterEnableAddress),
@@ -119,12 +120,10 @@ bool Core::RunFrame(std::string& error) {
 
 bool Core::Reset(std::string& error) {
     (void)error;
-    cpu_ = {};
-    cpu_.cpsr = 0x000000D3u;
-    cpu_.thumb = false;
-    cpu_.r[15] = bus_.HasBios() ? kBiosBase : kRomBase;
-    unknown_arm_instruction_count_ = 0;
-    unsupported_arm_stats_ = {};
+    cpu_.Reset();
+    cpu_.state().cpsr = 0x000000D3u;
+    cpu_.state().thumb = false;
+    cpu_.state().r[15] = bus_.HasBios() ? kBiosBase : kRomBase;
     last_unsupported_swi_ = 0u;
     halted_ = false;
     bus_.ConsumeHaltRequest();
@@ -137,7 +136,7 @@ bool Core::Reset(std::string& error) {
     bus_.Write8(kPostFlgAddress, 0x00u);
     bus_.SetLcdStatus(0u, false, false, true);
 #ifndef NDEBUG
-    ResetPcDebugTrace();
+    arm::ResetPcDebugTrace();
 #endif
     video_buffer_.fill(0xFF000000u);
     return true;
@@ -197,110 +196,57 @@ uint16_t Core::last_dispcnt_written() const noexcept {
 }
 
 
-bool Core::StepArm(std::string& error) {
-    cpu_.thumb = (cpu_.cpsr & kCpsrThumbBit) != 0u;
-    ServicePendingInterrupts();
-    cpu_.thumb = (cpu_.cpsr & kCpsrThumbBit) != 0u;
-
-    if (cpu_.thumb) {
-        const uint16_t instruction = bus_.Read16(cpu_.r[15]);
-        const uint32_t pc = cpu_.r[15];
-        const uint32_t fetch_pc = pc + 4u;
-        return ExecuteThumbInstruction(instruction, pc, fetch_pc, error);
+void Core::ServicePendingInterrupts() noexcept {
+    if ((cpu_.state().cpsr & arm::kCpsrIrqDisableBit) != 0u) {
+        return;
     }
 
-    const uint32_t pc = cpu_.r[15];
-    const uint32_t fetch_pc = pc + 8;
-    const uint32_t instruction = bus_.Read32(pc);
-    const uint32_t next_pc = pc + 4;
-
-    if (!ConditionPassed(instruction)) {
-        cpu_.r[15] = next_pc;
-        return true;
+    const uint16_t pending = bus_.PendingInterrupts();
+    if (pending == 0u) {
+        return;
     }
 
-    if ((instruction & 0x0FFFFFF0u) == 0x012FFF10u) {
-        const uint32_t rn = instruction & 0xFu;
-        const uint32_t target = ReadArmRegister(rn, fetch_pc);
-        const bool next_thumb = (target & 1u) != 0u;
-        SetThumbState(next_thumb);
-        cpu_.r[15] = next_thumb ? (target & ~1u) : (target & ~3u);
+    halted_ = false;
+    if (bus_.HasBios()) {
+        const uint8_t postflg = bus_.Read8(kPostFlgAddress);
+        if (postflg == 0x00u) {
+            return;
+        }
+
+        // The interrupt check runs before the instruction at r15 is
+        // executed. The BIOS epilogue is `SUBS PC, LR, #4`, so LR must be
+        // four bytes past that next instruction in this core's address
+        // representation, for both ARM and Thumb execution.
+        const uint32_t return_address = cpu_.state().r[15] + 4u;
 #ifndef NDEBUG
-        RecordPcFlowEvent("ARM.BX", pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], frame_counter_);
+        arm::ReportFirstBiosIrqEntry(
+            frame_counter_,
+            cpu_.state().r[15],
+            return_address,
+            pending,
+            bus_.Read32(kIrqCallbackAddress));
 #endif
-        return true;
+        cpu_.EnterException(arm::kCpuModeIrq, 0x00000018u, false, return_address, true);
+        return;
     }
 
-    if ((instruction & 0x0E000000u) == 0x0A000000u) {
-        const int32_t signed_offset = static_cast<int32_t>(SignExtend24(instruction & 0x00FFFFFFu) << 2);
-        if ((instruction & (1u << 24)) != 0u) {
-            cpu_.r[14] = next_pc;
-        }
-        cpu_.r[15] = static_cast<uint32_t>(static_cast<int32_t>(fetch_pc) + signed_offset);
-#ifndef NDEBUG
-        RecordPcFlowEvent("ARM.B/BL", pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], frame_counter_);
-#endif
-        return true;
+    const uint16_t bios_mirror = bus_.Read16(kBiosIrqFlagsMirrorAddress);
+    bus_.Write16(kBiosIrqFlagsMirrorAddress, static_cast<uint16_t>(bios_mirror | pending));
+    const uint16_t iwram_mirror = bus_.Read16(kBiosIrqFlagsMirrorIwramAddress);
+    bus_.Write16(kBiosIrqFlagsMirrorIwramAddress, static_cast<uint16_t>(iwram_mirror | pending));
+
+    const uint32_t callback = bus_.Read32(kIrqCallbackAddress);
+    if (callback == 0u || callback == 0xFFFFFFFFu) {
+        return;
+    }
+    if (callback < 0x02000000u || callback >= 0x10000000u) {
+        return;
     }
 
-    if ((instruction & 0x0F000000u) == 0x0F000000u) {
-        if (ExecuteArmSoftwareInterrupt(instruction, next_pc, error)) {
-            return true;
-        }
-        return HandleUnsupportedArm(UnsupportedArmClass::SoftwareInterrupt, next_pc, error);
-    }
-
-    const uint32_t top2 = (instruction >> 26) & 0x3u;
-    if (top2 == 0x0u) {
-        const bool maybe_msr_imm =
-            ((instruction & 0x0FB00000u) == 0x03200000u) &&
-            (((instruction >> 12u) & 0xFu) == 0xFu);
-        if ((instruction & 0x0F900FF0u) == 0x01000000u || // MRS
-            (instruction & 0x0DB0F000u) == 0x0120F000u || // MSR register
-            maybe_msr_imm) { // MSR immediate
-            if (ExecuteArmPsrTransfer(instruction, fetch_pc, next_pc, error)) {
-                return true;
-            }
-            return HandleUnsupportedArm(UnsupportedArmClass::Generic, next_pc, error);
-        }
-        if ((instruction & 0x0E000090u) == 0x00000090u && (instruction & 0x00000060u) != 0u) {
-            if (ExecuteArmHalfwordTransfer(instruction, fetch_pc, next_pc, error)) {
-                return true;
-            }
-            return HandleUnsupportedArm(UnsupportedArmClass::Generic, next_pc, error);
-        }
-        if ((instruction & 0x0F8000F0u) == 0x00800090u) {
-            if (ExecuteArmMultiplyLong(instruction, fetch_pc, next_pc, error)) {
-                return true;
-            }
-            return HandleUnsupportedArm(UnsupportedArmClass::Multiply, next_pc, error);
-        }
-        if ((instruction & 0x0FC000F0u) == 0x00000090u) {
-            if (ExecuteArmMultiply(instruction, fetch_pc, next_pc, error)) {
-                return true;
-            }
-            return HandleUnsupportedArm(UnsupportedArmClass::Multiply, next_pc, error);
-        } else if (ExecuteArmDataProcessing(instruction, fetch_pc, next_pc, error)) {
-            return true;
-        }
-    } else if (top2 == 0x1u) {
-        if (ExecuteArmSingleDataTransfer(instruction, fetch_pc, next_pc, error)) {
-            return true;
-        }
-    } else if ((instruction & 0x0E000000u) == 0x08000000u) {
-        if (ExecuteArmBlockDataTransfer(instruction, fetch_pc, next_pc, error)) {
-            return true;
-        }
-        return HandleUnsupportedArm(UnsupportedArmClass::BlockTransfer, next_pc, error);
-    }
-
-    if (instruction == 0xE1A00000u || instruction == 0xE320F000u) {
-        // NOP forms: MOV r0, r0 and YIELD as no-op.
-        cpu_.r[15] = next_pc;
-        return true;
-    }
-
-    return HandleUnsupportedArm(UnsupportedArmClass::Generic, next_pc, error);
+    const bool callback_thumb = (callback & 1u) != 0u;
+    const uint32_t handler_address = callback_thumb ? (callback & ~1u) : (callback & ~3u);
+    const uint32_t return_address = (cpu_.state().r[15] + 4u) | (cpu_.state().thumb ? 1u : 0u);
+    cpu_.EnterException(arm::kCpuModeIrq, handler_address, callback_thumb, return_address, true);
 }
 
 

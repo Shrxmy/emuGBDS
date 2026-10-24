@@ -1,15 +1,125 @@
-#include "emugbds/ingba/Core.h"
-#include "emugbds/ingba/CpuConstants.h"
-#include "emugbds/ingba/DebugTrace.h"
-#include "emugbds/ingba/MemoryConstants.h"
+#include "emugbds/arm/ArmCpu.h"
+#include "emugbds/arm/CpuConstants.h"
+#include "emugbds/arm/DebugTrace.h"
 
-namespace emugbds::ingba {
+namespace emugbds::arm {
 
-bool Core::HandleUnsupportedArm(UnsupportedArmClass unsupported_class, uint32_t next_pc, std::string& error) {
+void ArmCpu::Reset() noexcept {
+    cpu_ = {};
+    unknown_arm_instruction_count_ = 0;
+    unsupported_arm_stats_ = {};
+}
+
+
+bool ArmCpu::Step(std::string& error) {
+    cpu_.thumb = (cpu_.cpsr & kCpsrThumbBit) != 0u;
+
+    if (cpu_.thumb) {
+        const uint16_t instruction = bus_.Read16(cpu_.r[15]);
+        const uint32_t pc = cpu_.r[15];
+        const uint32_t fetch_pc = pc + 4u;
+        return ExecuteThumbInstruction(instruction, pc, fetch_pc, error);
+    }
+
+    const uint32_t pc = cpu_.r[15];
+    const uint32_t fetch_pc = pc + 8;
+    const uint32_t instruction = bus_.Read32(pc);
+    const uint32_t next_pc = pc + 4;
+
+    if (!ConditionPassed(instruction)) {
+        cpu_.r[15] = next_pc;
+        return true;
+    }
+
+    if ((instruction & 0x0FFFFFF0u) == 0x012FFF10u) {
+        const uint32_t rn = instruction & 0xFu;
+        const uint32_t target = ReadArmRegister(rn, fetch_pc);
+        const bool next_thumb = (target & 1u) != 0u;
+        SetThumbState(next_thumb);
+        cpu_.r[15] = next_thumb ? (target & ~1u) : (target & ~3u);
+#ifndef NDEBUG
+        RecordPcFlowEvent("ARM.BX", pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
+#endif
+        return true;
+    }
+
+    if ((instruction & 0x0E000000u) == 0x0A000000u) {
+        const int32_t signed_offset = static_cast<int32_t>(SignExtend24(instruction & 0x00FFFFFFu) << 2);
+        if ((instruction & (1u << 24)) != 0u) {
+            cpu_.r[14] = next_pc;
+        }
+        cpu_.r[15] = static_cast<uint32_t>(static_cast<int32_t>(fetch_pc) + signed_offset);
+#ifndef NDEBUG
+        RecordPcFlowEvent("ARM.B/BL", pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
+#endif
+        return true;
+    }
+
+    if ((instruction & 0x0F000000u) == 0x0F000000u) {
+        if (ExecuteArmSoftwareInterrupt(instruction, next_pc, error)) {
+            return true;
+        }
+        return HandleUnsupportedArm(UnsupportedArmClass::SoftwareInterrupt, next_pc, error);
+    }
+
+    const uint32_t top2 = (instruction >> 26) & 0x3u;
+    if (top2 == 0x0u) {
+        const bool maybe_msr_imm =
+            ((instruction & 0x0FB00000u) == 0x03200000u) &&
+            (((instruction >> 12u) & 0xFu) == 0xFu);
+        if ((instruction & 0x0F900FF0u) == 0x01000000u || // MRS
+            (instruction & 0x0DB0F000u) == 0x0120F000u || // MSR register
+            maybe_msr_imm) { // MSR immediate
+            if (ExecuteArmPsrTransfer(instruction, fetch_pc, next_pc, error)) {
+                return true;
+            }
+            return HandleUnsupportedArm(UnsupportedArmClass::Generic, next_pc, error);
+        }
+        if ((instruction & 0x0E000090u) == 0x00000090u && (instruction & 0x00000060u) != 0u) {
+            if (ExecuteArmHalfwordTransfer(instruction, fetch_pc, next_pc, error)) {
+                return true;
+            }
+            return HandleUnsupportedArm(UnsupportedArmClass::Generic, next_pc, error);
+        }
+        if ((instruction & 0x0F8000F0u) == 0x00800090u) {
+            if (ExecuteArmMultiplyLong(instruction, fetch_pc, next_pc, error)) {
+                return true;
+            }
+            return HandleUnsupportedArm(UnsupportedArmClass::Multiply, next_pc, error);
+        }
+        if ((instruction & 0x0FC000F0u) == 0x00000090u) {
+            if (ExecuteArmMultiply(instruction, fetch_pc, next_pc, error)) {
+                return true;
+            }
+            return HandleUnsupportedArm(UnsupportedArmClass::Multiply, next_pc, error);
+        } else if (ExecuteArmDataProcessing(instruction, fetch_pc, next_pc, error)) {
+            return true;
+        }
+    } else if (top2 == 0x1u) {
+        if (ExecuteArmSingleDataTransfer(instruction, fetch_pc, next_pc, error)) {
+            return true;
+        }
+    } else if ((instruction & 0x0E000000u) == 0x08000000u) {
+        if (ExecuteArmBlockDataTransfer(instruction, fetch_pc, next_pc, error)) {
+            return true;
+        }
+        return HandleUnsupportedArm(UnsupportedArmClass::BlockTransfer, next_pc, error);
+    }
+
+    if (instruction == 0xE1A00000u || instruction == 0xE320F000u) {
+        // NOP forms: MOV r0, r0 and YIELD as no-op.
+        cpu_.r[15] = next_pc;
+        return true;
+    }
+
+    return HandleUnsupportedArm(UnsupportedArmClass::Generic, next_pc, error);
+}
+
+
+bool ArmCpu::HandleUnsupportedArm(UnsupportedArmClass unsupported_class, uint32_t next_pc, std::string& error) {
     RecordUnsupportedArm(unsupported_class);
     cpu_.r[15] = next_pc;
     if (unknown_arm_instruction_count_ > 10'000'000u) {
-        halted_ = true;
         error = "In-house GBA core halted due to unsupported instruction volume (top class: " +
             std::string(DominantUnsupportedClassName()) +
             ", total=" + std::to_string(unknown_arm_instruction_count_) + ")";
@@ -19,7 +129,7 @@ bool Core::HandleUnsupportedArm(UnsupportedArmClass unsupported_class, uint32_t 
 }
 
 
-void Core::RecordUnsupportedArm(UnsupportedArmClass unsupported_class) {
+void ArmCpu::RecordUnsupportedArm(UnsupportedArmClass unsupported_class) {
     ++unknown_arm_instruction_count_;
     switch (unsupported_class) {
     case UnsupportedArmClass::Generic:
@@ -41,7 +151,7 @@ void Core::RecordUnsupportedArm(UnsupportedArmClass unsupported_class) {
 }
 
 
-const char* Core::DominantUnsupportedClassName() const noexcept {
+const char* ArmCpu::DominantUnsupportedClassName() const noexcept {
     const uint64_t generic = unsupported_arm_stats_.generic;
     const uint64_t thumb = unsupported_arm_stats_.thumb;
     const uint64_t multiply = unsupported_arm_stats_.multiply;
@@ -69,7 +179,7 @@ const char* Core::DominantUnsupportedClassName() const noexcept {
 }
 
 
-bool Core::DecodeArmOperand2(
+bool ArmCpu::DecodeArmOperand2(
     uint32_t instruction, uint32_t fetch_pc, uint32_t& operand2, bool& shifter_carry) const {
     if ((instruction & (1u << 25)) != 0u) {
         const uint32_t imm8 = instruction & 0xFFu;
@@ -86,7 +196,7 @@ bool Core::DecodeArmOperand2(
 }
 
 
-uint32_t Core::DecodeShiftedRegister(uint32_t instruction, uint32_t fetch_pc, bool& shifter_carry) const {
+uint32_t ArmCpu::DecodeShiftedRegister(uint32_t instruction, uint32_t fetch_pc, bool& shifter_carry) const {
     const uint32_t rm = instruction & 0xFu;
     const uint32_t shift_type = (instruction >> 5) & 0x3u;
     const bool shift_by_register = (instruction & (1u << 4)) != 0u;
@@ -181,7 +291,7 @@ uint32_t Core::DecodeShiftedRegister(uint32_t instruction, uint32_t fetch_pc, bo
 }
 
 
-uint32_t Core::ReadArmRegister(uint32_t reg_index, uint32_t fetch_pc) const {
+uint32_t ArmCpu::ReadArmRegister(uint32_t reg_index, uint32_t fetch_pc) const {
     if (reg_index == 15u) {
         return fetch_pc;
     }
@@ -189,7 +299,7 @@ uint32_t Core::ReadArmRegister(uint32_t reg_index, uint32_t fetch_pc) const {
 }
 
 
-void Core::WriteArmRegister(uint32_t reg_index, uint32_t value) {
+void ArmCpu::WriteArmRegister(uint32_t reg_index, uint32_t value) {
     if (reg_index == 15u) {
         cpu_.r[15] = cpu_.thumb ? (value & ~1u) : (value & ~3u);
         return;
@@ -198,7 +308,7 @@ void Core::WriteArmRegister(uint32_t reg_index, uint32_t value) {
 }
 
 
-uint32_t Core::ReadArmUserRegister(uint32_t reg_index, uint32_t fetch_pc) const {
+uint32_t ArmCpu::ReadArmUserRegister(uint32_t reg_index, uint32_t fetch_pc) const {
     reg_index &= 0xFu;
     if (reg_index == 15u) {
         return fetch_pc;
@@ -215,7 +325,7 @@ uint32_t Core::ReadArmUserRegister(uint32_t reg_index, uint32_t fetch_pc) const 
 }
 
 
-void Core::WriteArmUserRegister(uint32_t reg_index, uint32_t value) {
+void ArmCpu::WriteArmUserRegister(uint32_t reg_index, uint32_t value) {
     reg_index &= 0xFu;
     if (reg_index == 15u) {
         WriteArmRegister(reg_index, value);
@@ -238,7 +348,7 @@ void Core::WriteArmUserRegister(uint32_t reg_index, uint32_t value) {
 }
 
 
-uint32_t Core::ReadThumbRegister(uint32_t reg_index, uint32_t fetch_pc) const {
+uint32_t ArmCpu::ReadThumbRegister(uint32_t reg_index, uint32_t fetch_pc) const {
     if (reg_index == 15u) {
         return fetch_pc;
     }
@@ -246,7 +356,7 @@ uint32_t Core::ReadThumbRegister(uint32_t reg_index, uint32_t fetch_pc) const {
 }
 
 
-void Core::WriteThumbRegister(uint32_t reg_index, uint32_t value) {
+void ArmCpu::WriteThumbRegister(uint32_t reg_index, uint32_t value) {
     if (reg_index == 15u) {
         cpu_.r[15] = value & ~1u;
         return;
@@ -254,7 +364,7 @@ void Core::WriteThumbRegister(uint32_t reg_index, uint32_t value) {
     cpu_.r[reg_index & 0xFu] = value;
 }
 
-void Core::SetThumbState(bool enabled) noexcept {
+void ArmCpu::SetThumbState(bool enabled) noexcept {
     cpu_.thumb = enabled;
     if (enabled) {
         cpu_.cpsr |= kCpsrThumbBit;
@@ -264,33 +374,33 @@ void Core::SetThumbState(bool enabled) noexcept {
 }
 
 
-void Core::SetNFlag(bool value) {
+void ArmCpu::SetNFlag(bool value) {
     cpu_.cpsr = (cpu_.cpsr & ~(1u << 31)) | (value ? (1u << 31) : 0u);
 }
 
 
-void Core::SetZFlag(bool value) {
+void ArmCpu::SetZFlag(bool value) {
     cpu_.cpsr = (cpu_.cpsr & ~(1u << 30)) | (value ? (1u << 30) : 0u);
 }
 
 
-void Core::SetCFlag(bool value) {
+void ArmCpu::SetCFlag(bool value) {
     cpu_.cpsr = (cpu_.cpsr & ~(1u << 29)) | (value ? (1u << 29) : 0u);
 }
 
 
-void Core::SetVFlag(bool value) {
+void ArmCpu::SetVFlag(bool value) {
     cpu_.cpsr = (cpu_.cpsr & ~(1u << 28)) | (value ? (1u << 28) : 0u);
 }
 
 
-void Core::SetNZFlags(uint32_t value) {
+void ArmCpu::SetNZFlags(uint32_t value) {
     SetNFlag((value & 0x80000000u) != 0u);
     SetZFlag(value == 0u);
 }
 
 
-bool Core::ConditionPassed(uint32_t instruction) const {
+bool ArmCpu::ConditionPassed(uint32_t instruction) const {
     const uint32_t cond = (instruction >> 28) & 0xFu;
     const bool n = (cpu_.cpsr & (1u << 31)) != 0;
     const bool z = (cpu_.cpsr & (1u << 30)) != 0;
@@ -334,7 +444,7 @@ bool Core::ConditionPassed(uint32_t instruction) const {
 }
 
 
-uint32_t Core::SignExtend24(uint32_t value) {
+uint32_t ArmCpu::SignExtend24(uint32_t value) {
     if ((value & 0x00800000u) != 0) {
         return value | 0xFF000000u;
     }
@@ -342,13 +452,13 @@ uint32_t Core::SignExtend24(uint32_t value) {
 }
 
 
-int32_t Core::SignExtend(uint32_t value, uint32_t bits) {
+int32_t ArmCpu::SignExtend(uint32_t value, uint32_t bits) {
     const uint32_t shift = 32u - bits;
     return static_cast<int32_t>(value << shift) >> shift;
 }
 
 
-bool Core::IsValidCpuMode(uint32_t mode) noexcept {
+bool ArmCpu::IsValidCpuMode(uint32_t mode) noexcept {
     switch (mode) {
     case kCpuModeUser:
     case kCpuModeFiq:
@@ -364,7 +474,7 @@ bool Core::IsValidCpuMode(uint32_t mode) noexcept {
 }
 
 
-bool Core::ModeHasSpsr(uint32_t mode) noexcept {
+bool ArmCpu::ModeHasSpsr(uint32_t mode) noexcept {
     return mode == kCpuModeFiq ||
         mode == kCpuModeIrq ||
         mode == kCpuModeSupervisor ||
@@ -373,17 +483,17 @@ bool Core::ModeHasSpsr(uint32_t mode) noexcept {
 }
 
 
-uint32_t Core::CurrentMode() const noexcept {
+uint32_t ArmCpu::CurrentMode() const noexcept {
     return cpu_.cpsr & kCpuModeMask;
 }
 
 
-bool Core::CurrentModeIsPrivileged() const noexcept {
+bool ArmCpu::CurrentModeIsPrivileged() const noexcept {
     return CurrentMode() != kCpuModeUser;
 }
 
 
-void Core::SaveBankedRegistersForMode(uint32_t mode) noexcept {
+void ArmCpu::SaveBankedRegistersForMode(uint32_t mode) noexcept {
     if (mode != kCpuModeFiq && IsValidCpuMode(mode)) {
         for (uint32_t reg = 8u; reg <= 12u; ++reg) {
             cpu_.shared_r8_r12[reg - 8u] = cpu_.r[reg];
@@ -423,7 +533,7 @@ void Core::SaveBankedRegistersForMode(uint32_t mode) noexcept {
 }
 
 
-void Core::RestoreBankedRegistersForMode(uint32_t mode) noexcept {
+void ArmCpu::RestoreBankedRegistersForMode(uint32_t mode) noexcept {
     if (mode != kCpuModeFiq && IsValidCpuMode(mode)) {
         for (uint32_t reg = 8u; reg <= 12u; ++reg) {
             cpu_.r[reg] = cpu_.shared_r8_r12[reg - 8u];
@@ -463,7 +573,7 @@ void Core::RestoreBankedRegistersForMode(uint32_t mode) noexcept {
 }
 
 
-void Core::SwitchCpuMode(uint32_t new_mode) noexcept {
+void ArmCpu::SwitchCpuMode(uint32_t new_mode) noexcept {
     const uint32_t current_mode = CurrentMode();
     if (new_mode == current_mode || !IsValidCpuMode(new_mode)) {
         return;
@@ -475,7 +585,7 @@ void Core::SwitchCpuMode(uint32_t new_mode) noexcept {
 }
 
 
-uint32_t Core::ReadSpsrForMode(uint32_t mode) const noexcept {
+uint32_t ArmCpu::ReadSpsrForMode(uint32_t mode) const noexcept {
     switch (mode) {
     case kCpuModeFiq:
         return cpu_.spsr_fiq;
@@ -493,7 +603,7 @@ uint32_t Core::ReadSpsrForMode(uint32_t mode) const noexcept {
 }
 
 
-void Core::WriteSpsrForMode(uint32_t mode, uint32_t value) noexcept {
+void ArmCpu::WriteSpsrForMode(uint32_t mode, uint32_t value) noexcept {
     switch (mode) {
     case kCpuModeFiq:
         cpu_.spsr_fiq = value;
@@ -516,12 +626,12 @@ void Core::WriteSpsrForMode(uint32_t mode, uint32_t value) noexcept {
 }
 
 
-uint32_t Core::ReadCurrentSpsr() const noexcept {
+uint32_t ArmCpu::ReadCurrentSpsr() const noexcept {
     return ReadSpsrForMode(CurrentMode());
 }
 
 
-bool Core::WriteCurrentSpsr(uint32_t value) noexcept {
+bool ArmCpu::WriteCurrentSpsr(uint32_t value) noexcept {
     const uint32_t mode = CurrentMode();
     if (!ModeHasSpsr(mode)) {
         return false;
@@ -531,7 +641,7 @@ bool Core::WriteCurrentSpsr(uint32_t value) noexcept {
 }
 
 
-void Core::WriteCpsr(uint32_t value) noexcept {
+void ArmCpu::WriteCpsr(uint32_t value) noexcept {
     const uint32_t current_mode = CurrentMode();
     uint32_t next_mode = value & kCpuModeMask;
     if (!IsValidCpuMode(next_mode)) {
@@ -549,7 +659,7 @@ void Core::WriteCpsr(uint32_t value) noexcept {
 }
 
 
-void Core::EnterException(
+void ArmCpu::EnterException(
     uint32_t target_mode,
     uint32_t handler_address,
     bool handler_thumb,
@@ -579,66 +689,12 @@ void Core::EnterException(
     } else if (target_mode == kCpuModeSupervisor) {
         site = "EXC.SVC";
     }
-    RecordPcFlowEvent(site, old_pc, cpu_.r[15], 0u, cpu_.cpsr, cpu_.r[14], cpu_.r[13], frame_counter_);
+    RecordPcFlowEvent(site, old_pc, cpu_.r[15], 0u, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
 #endif
 }
 
 
-void Core::ServicePendingInterrupts() noexcept {
-    if ((cpu_.cpsr & kCpsrIrqDisableBit) != 0u) {
-        return;
-    }
-
-    const uint16_t pending = bus_.PendingInterrupts();
-    if (pending == 0u) {
-        return;
-    }
-
-    halted_ = false;
-    if (bus_.HasBios()) {
-        const uint8_t postflg = bus_.Read8(kPostFlgAddress);
-        if (postflg == 0x00u) {
-            return;
-        }
-
-        // The interrupt check runs before the instruction at r15 is
-        // executed. The BIOS epilogue is `SUBS PC, LR, #4`, so LR must be
-        // four bytes past that next instruction in this core's address
-        // representation, for both ARM and Thumb execution.
-        const uint32_t return_address = cpu_.r[15] + 4u;
-#ifndef NDEBUG
-        ReportFirstBiosIrqEntry(
-            frame_counter_,
-            cpu_.r[15],
-            return_address,
-            pending,
-            bus_.Read32(kIrqCallbackAddress));
-#endif
-        EnterException(kCpuModeIrq, 0x00000018u, false, return_address, true);
-        return;
-    }
-
-    const uint16_t bios_mirror = bus_.Read16(kBiosIrqFlagsMirrorAddress);
-    bus_.Write16(kBiosIrqFlagsMirrorAddress, static_cast<uint16_t>(bios_mirror | pending));
-    const uint16_t iwram_mirror = bus_.Read16(kBiosIrqFlagsMirrorIwramAddress);
-    bus_.Write16(kBiosIrqFlagsMirrorIwramAddress, static_cast<uint16_t>(iwram_mirror | pending));
-
-    const uint32_t callback = bus_.Read32(kIrqCallbackAddress);
-    if (callback == 0u || callback == 0xFFFFFFFFu) {
-        return;
-    }
-    if (callback < 0x02000000u || callback >= 0x10000000u) {
-        return;
-    }
-
-    const bool callback_thumb = (callback & 1u) != 0u;
-    const uint32_t handler_address = callback_thumb ? (callback & ~1u) : (callback & ~3u);
-    const uint32_t return_address = (cpu_.r[15] + 4u) | (cpu_.thumb ? 1u : 0u);
-    EnterException(kCpuModeIrq, handler_address, callback_thumb, return_address, true);
-}
-
-
-uint32_t Core::Ror(uint32_t value, uint32_t amount) {
+uint32_t ArmCpu::Ror(uint32_t value, uint32_t amount) {
     const uint32_t rotated = amount & 31u;
     if (rotated == 0u) {
         return value;
@@ -647,7 +703,7 @@ uint32_t Core::Ror(uint32_t value, uint32_t amount) {
 }
 
 
-Core::AddResult Core::AddWithCarry(uint32_t lhs, uint32_t rhs, bool carry_in) {
+ArmCpu::AddResult ArmCpu::AddWithCarry(uint32_t lhs, uint32_t rhs, bool carry_in) {
     const uint64_t carry = carry_in ? 1ull : 0ull;
     const uint64_t wide = static_cast<uint64_t>(lhs) + static_cast<uint64_t>(rhs) + carry;
     AddResult out;
@@ -662,4 +718,4 @@ Core::AddResult Core::AddWithCarry(uint32_t lhs, uint32_t rhs, bool carry_in) {
 }
 
 
-} // namespace emugbds::ingba
+} // namespace emugbds::arm

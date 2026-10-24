@@ -1,13 +1,13 @@
 #pragma once
 
-// Optional diagnostics for the in-house GBA CPU. Kept separate from runtime behavior.
+// Optional diagnostics for the in-house ARM CPUs. Kept separate from runtime behavior.
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 
-namespace emugbds::ingba {
+namespace emugbds::arm {
 
 #ifndef NDEBUG
 struct PcFlowEvent {
@@ -184,4 +184,4 @@ inline void ReportFirstBiosIrqEntry(uint64_t, uint32_t, uint32_t, uint16_t, uint
 inline void ReportFirstIrqReturn(uint64_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) noexcept {}
 #endif
 
-} // namespace emugbds::ingba
+} // namespace emugbds::arm

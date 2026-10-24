@@ -1,9 +1,9 @@
-#include "emugbds/ingba/Core.h"
-#include "emugbds/ingba/DebugTrace.h"
+#include "emugbds/arm/ArmCpu.h"
+#include "emugbds/arm/DebugTrace.h"
 
-namespace emugbds::ingba {
+namespace emugbds::arm {
 
-bool Core::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t fetch_pc, std::string& error) {
+bool ArmCpu::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t fetch_pc, std::string& error) {
     const uint32_t next_pc = pc + 2u;
 
     auto logical_shift_left = [&](uint32_t value, uint32_t amount, bool& carry_out, bool& carry_valid) -> uint32_t {
@@ -87,7 +87,7 @@ bool Core::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t f
         cpu_.r[14] = next_pc | 1u;
         const uint32_t old_pc = cpu_.r[15];
         cpu_.r[15] = target & ~1u;
-        RecordPcFlowEvent("THUMB.BL", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], frame_counter_);
+        RecordPcFlowEvent("THUMB.BL", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
         return true;
     }
 
@@ -326,7 +326,7 @@ bool Core::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t f
             if (rd != 15u) {
                 cpu_.r[15] = next_pc;
             } else {
-                RecordPcFlowEvent("THUMB.ADD.PC", pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], frame_counter_);
+                RecordPcFlowEvent("THUMB.ADD.PC", pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
             }
             return true;
         }
@@ -343,14 +343,14 @@ bool Core::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t f
             if (rd != 15u) {
                 cpu_.r[15] = next_pc;
             } else {
-                RecordPcFlowEvent("THUMB.MOV.PC", pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], frame_counter_);
+                RecordPcFlowEvent("THUMB.MOV.PC", pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
             }
             return true;
         case 0x3: { // BX
             const bool next_thumb = (rhs & 1u) != 0u;
             SetThumbState(next_thumb);
             cpu_.r[15] = next_thumb ? (rhs & ~1u) : (rhs & ~3u);
-            RecordPcFlowEvent("THUMB.BX", pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], frame_counter_);
+            RecordPcFlowEvent("THUMB.BX", pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
             return true;
         }
         default:
@@ -534,7 +534,7 @@ bool Core::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t f
                     const uint32_t old_pc = cpu_.r[15];
                     cpu_.r[15] = next_thumb ? (value & ~1u) : (value & ~3u);
                     loaded_pc = true;
-                    RecordPcFlowEvent("THUMB.POP.PC", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], frame_counter_);
+                    RecordPcFlowEvent("THUMB.POP.PC", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
                 } else {
                     cpu_.r[reg] = value;
                 }
@@ -608,7 +608,7 @@ bool Core::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t f
         if (ConditionPassed(cond << 28u)) {
             const int32_t offset = SignExtend(imm8, 8u) << 1u;
             cpu_.r[15] = static_cast<uint32_t>(static_cast<int32_t>(fetch_pc) + offset);
-            RecordPcFlowEvent("THUMB.B.cond", pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], frame_counter_);
+            RecordPcFlowEvent("THUMB.B.cond", pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
         } else {
             cpu_.r[15] = next_pc;
         }
@@ -618,7 +618,7 @@ bool Core::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t f
     if ((instruction & 0xF800u) == 0xE000u) {
         const int32_t offset = SignExtend(instruction & 0x07FFu, 11u) << 1u;
         cpu_.r[15] = static_cast<uint32_t>(static_cast<int32_t>(fetch_pc) + offset);
-        RecordPcFlowEvent("THUMB.B", pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], frame_counter_);
+        RecordPcFlowEvent("THUMB.B", pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
         return true;
     }
 
@@ -626,4 +626,4 @@ bool Core::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t f
 }
 
 
-} // namespace emugbds::ingba
+} // namespace emugbds::arm

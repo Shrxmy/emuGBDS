@@ -3,7 +3,7 @@
 #include <array>
 #include <cstdint>
 
-namespace emugbds::ingba {
+namespace emugbds::arm {
 
 struct CpuState {
     std::array<uint32_t, 16> r{};
@@ -26,4 +26,4 @@ struct CpuState {
     uint32_t spsr_und = 0u;
 };
 
-} // namespace emugbds::ingba
+} // namespace emugbds::arm

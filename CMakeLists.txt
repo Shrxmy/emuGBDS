@@ -63,13 +63,17 @@ endif()
 
 # Keep core implementation units in one place so the application and tests
 # cannot silently drift apart as the in-house GBA core is modularized.
+set(EMUGBDS_ARM_CPU_SOURCES
+    host/src/arm/ArmCpu.cpp
+    host/src/arm/ArmExecute.cpp
+    host/src/arm/ThumbExecute.cpp
+)
+
 set(EMUGBDS_INHOUSE_GBA_SOURCES
+    ${EMUGBDS_ARM_CPU_SOURCES}
     host/src/ingba/Core.cpp
     host/src/ingba/MemoryBus.cpp
-    host/src/ingba/ArmExecute.cpp
-    host/src/ingba/ThumbExecute.cpp
     host/src/ingba/Swi.cpp
-    host/src/ingba/CpuState.cpp
     host/src/ingba/Video.cpp
     host/src/ingba/Apu.cpp
 )
