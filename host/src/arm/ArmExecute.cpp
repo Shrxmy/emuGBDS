@@ -292,7 +292,11 @@ bool ArmCpu::ExecuteArmSingleDataTransfer(
         }
 
         const uint32_t old_pc = cpu_.r[15];
-        WriteArmRegister(rd, value);
+        if (rd == 15u) {
+            LoadPcInterworking(value);
+        } else {
+            WriteArmRegister(rd, value);
+        }
         if (rd == 15u) {
             RecordPcFlowEvent("ARM.LDR.PC", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
             if (!pre_index || write_back) {
@@ -350,7 +354,19 @@ bool ArmCpu::ExecuteArmHalfwordTransfer(
         updated_base = add_offset ? (base + offset) : (base - offset);
     }
 
-    if (!load) {
+    if (!load && v5_ && op >= 0x2u) {
+        // LDRD (op 2) / STRD (op 3) use an even Rd and its successor.
+        if ((rd & 1u) != 0u) {
+            return false;
+        }
+        if (op == 0x2u) {
+            WriteArmRegister(rd, bus_.Read32(address & ~3u));
+            WriteArmRegister(rd + 1u, bus_.Read32((address + 4u) & ~3u));
+        } else {
+            bus_.Write32(address & ~3u, ReadArmRegister(rd, fetch_pc));
+            bus_.Write32((address + 4u) & ~3u, ReadArmRegister(rd + 1u, fetch_pc));
+        }
+    } else if (!load) {
         if (op != 0x1u) {
             return false;
         }
@@ -532,17 +548,24 @@ bool ArmCpu::ExecuteArmBlockDataTransfer(
                 WriteArmRegister(reg, value);
             }
         } else {
-            const uint32_t value = force_user_registers
+            uint32_t value = force_user_registers
                 ? ReadArmUserRegister(reg, fetch_pc)
                 : ReadArmRegister(reg, fetch_pc);
+            // ARMv4 stores the written-back base unless the base is the first listed register.
+            if (!v5_ && write_back && reg == rn && (reg_list & ((1u << rn) - 1u)) != 0u) {
+                value = updated_base;
+            }
             bus_.Write32(address & ~3u, value);
         }
 
         address += 4u;
     }
 
-    // A loaded base register wins over writeback.
-    if (write_back && !(load && (reg_list & (1u << rn)) != 0u)) {
+    // A loaded base register wins over writeback on ARMv4. ARMv5 still writes back
+    // when the base is the only register or not the last one in the list.
+    const bool base_loaded = load && (reg_list & (1u << rn)) != 0u;
+    const bool v5_base_writeback = v5_ && ((reg_list >> rn) != 1u || reg_list == (1u << rn));
+    if (write_back && (!base_loaded || v5_base_writeback)) {
         WriteArmRegister(rn, updated_base);
     }
 
@@ -555,7 +578,7 @@ bool ArmCpu::ExecuteArmBlockDataTransfer(
             WriteCpsr(restored_cpsr);
             cpu_.r[15] = restored_pc;
         } else {
-            cpu_.r[15] = loaded_pc_value & ~3u;
+            LoadPcInterworking(loaded_pc_value);
         }
         RecordPcFlowEvent("ARM.LDM.PC", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
     } else {
@@ -568,6 +591,191 @@ bool ArmCpu::ExecuteArmBlockDataTransfer(
 bool ArmCpu::ExecuteArmSoftwareInterrupt(uint32_t instruction, uint32_t next_pc, std::string& error) {
     const uint8_t swi_imm = static_cast<uint8_t>(instruction & 0xFFu);
     return ExecuteSoftwareInterrupt(swi_imm, next_pc, false, error);
+}
+
+
+bool ArmCpu::ExecuteArmSwap(uint32_t instruction, uint32_t next_pc) {
+    const bool byte_swap = (instruction & (1u << 22)) != 0u;
+    const uint32_t rn = (instruction >> 16) & 0xFu;
+    const uint32_t rd = (instruction >> 12) & 0xFu;
+    const uint32_t source = cpu_.r[instruction & 0xFu]; // Read before Rd changes; Rm may equal Rd.
+    const uint32_t address = cpu_.r[rn];
+
+    uint32_t loaded = 0u;
+    if (byte_swap) {
+        loaded = bus_.Read8(address);
+        bus_.Write8(address, static_cast<uint8_t>(source & 0xFFu));
+    } else {
+        loaded = Ror(bus_.Read32(address & ~3u), (address & 3u) * 8u);
+        bus_.Write32(address & ~3u, source);
+    }
+    WriteArmRegister(rd, loaded);
+    cpu_.r[15] = next_pc;
+    return true;
+}
+
+
+bool ArmCpu::ExecuteArmUnconditional(uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, std::string& error) {
+    if ((instruction & 0x0E000000u) == 0x0A000000u) { // BLX label: always switches to Thumb.
+        const int32_t offset = static_cast<int32_t>(SignExtend24(instruction & 0x00FFFFFFu) << 2) +
+            static_cast<int32_t>((instruction >> 23) & 0x2u); // H bit (24) adds a halfword.
+        const uint32_t old_pc = cpu_.r[15];
+        cpu_.r[14] = next_pc;
+        SetThumbState(true);
+        cpu_.r[15] = (fetch_pc + static_cast<uint32_t>(offset)) & ~1u;
+        RecordPcFlowEvent("ARM.BLX", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
+        return true;
+    }
+    if ((instruction & 0x0D70F000u) == 0x0550F000u) { // PLD: a cache hint with no architectural effect.
+        cpu_.r[15] = next_pc;
+        return true;
+    }
+    return HandleUnsupportedArm(UnsupportedArmClass::Generic, next_pc, error);
+}
+
+
+bool ArmCpu::ExecuteArmV5Instruction(uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, bool& handled) {
+    handled = true;
+    const uint32_t rd = (instruction >> 12) & 0xFu;
+    const uint32_t rm = instruction & 0xFu;
+
+    if ((instruction & 0x0FFFFFF0u) == 0x012FFF30u) { // BLX Rm
+        const uint32_t target = ReadArmRegister(rm, fetch_pc);
+        const uint32_t old_pc = cpu_.r[15];
+        cpu_.r[14] = next_pc;
+        const bool thumb = (target & 1u) != 0u;
+        SetThumbState(thumb);
+        cpu_.r[15] = thumb ? (target & ~1u) : (target & ~3u);
+        RecordPcFlowEvent("ARM.BLX", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
+        return true;
+    }
+
+    if ((instruction & 0x0FFF0FF0u) == 0x016F0F10u) { // CLZ
+        uint32_t value = ReadArmRegister(rm, fetch_pc);
+        uint32_t zeros = 0u;
+        while (zeros < 32u && (value & 0x80000000u) == 0u) {
+            value <<= 1u;
+            ++zeros;
+        }
+        WriteArmRegister(rd, zeros);
+        cpu_.r[15] = next_pc;
+        return true;
+    }
+
+    constexpr uint32_t kQFlag = 1u << 27;
+    const auto signed_reg = [&](uint32_t reg) {
+        return static_cast<int64_t>(static_cast<int32_t>(ReadArmRegister(reg, fetch_pc)));
+    };
+    const uint32_t rn = (instruction >> 16) & 0xFu;
+
+    if ((instruction & 0x0F900FF0u) == 0x01000050u) { // QADD, QSUB, QDADD, QDSUB
+        const uint32_t op = (instruction >> 21) & 0x3u;
+        bool saturated = false;
+        const auto saturate = [&](int64_t value) {
+            if (value > INT32_MAX || value < INT32_MIN) {
+                saturated = true;
+                return static_cast<int64_t>(value > 0 ? INT32_MAX : INT32_MIN);
+            }
+            return value;
+        };
+        int64_t second = signed_reg(rn);
+        if ((op & 0x2u) != 0u) {
+            second = saturate(second * 2); // The doubling saturates on its own.
+        }
+        const int64_t result = saturate((op & 0x1u) != 0u ? signed_reg(rm) - second : signed_reg(rm) + second);
+        WriteArmRegister(rd, static_cast<uint32_t>(result));
+        if (saturated) {
+            cpu_.cpsr |= kQFlag;
+        }
+        cpu_.r[15] = next_pc;
+        return true;
+    }
+
+    if ((instruction & 0x0F900090u) == 0x01000080u) { // Signed halfword multiplies
+        const uint32_t op = (instruction >> 21) & 0x3u;
+        const uint32_t rs = (instruction >> 8) & 0xFu;
+        const bool x_top = (instruction & (1u << 5)) != 0u;
+        const bool y_top = (instruction & (1u << 6)) != 0u;
+        const auto half = [&](uint32_t reg, bool top) {
+            const uint32_t value = ReadArmRegister(reg, fetch_pc);
+            return static_cast<int64_t>(static_cast<int16_t>(top ? (value >> 16) : value));
+        };
+        // Fields 19-16 and 15-12 are Rd/Rn, or RdHi/RdLo for SMLALxy.
+        const uint32_t dest = rn;
+        const uint32_t accumulate = rd;
+        const auto write_with_q = [&](int64_t value) {
+            WriteArmRegister(dest, static_cast<uint32_t>(value));
+            if (value != static_cast<int32_t>(value)) {
+                cpu_.cpsr |= kQFlag; // Overflow sets Q but the result is not saturated.
+            }
+        };
+        switch (op) {
+        case 0x0u: // SMLAxy
+            write_with_q(half(rm, x_top) * half(rs, y_top) + signed_reg(accumulate));
+            break;
+        case 0x1u: { // SMLAWy (x=0) / SMULWy (x=1)
+            const int64_t product = (signed_reg(rm) * half(rs, y_top)) >> 16;
+            if (x_top) {
+                WriteArmRegister(dest, static_cast<uint32_t>(product));
+            } else {
+                write_with_q(product + signed_reg(accumulate));
+            }
+            break;
+        }
+        case 0x2u: { // SMLALxy: 64-bit accumulate in RdHi:RdLo, Q unaffected.
+            const uint64_t current = (static_cast<uint64_t>(cpu_.r[dest]) << 32u) | cpu_.r[accumulate];
+            const uint64_t sum = current + static_cast<uint64_t>(half(rm, x_top) * half(rs, y_top));
+            WriteArmRegister(accumulate, static_cast<uint32_t>(sum));
+            WriteArmRegister(dest, static_cast<uint32_t>(sum >> 32u));
+            break;
+        }
+        default: // SMULxy
+            WriteArmRegister(dest, static_cast<uint32_t>(half(rm, x_top) * half(rs, y_top)));
+            break;
+        }
+        cpu_.r[15] = next_pc;
+        return true;
+    }
+
+    if ((instruction & 0x0F000010u) == 0x0E000010u) { // MRC / MCR
+        const uint32_t coprocessor = (instruction >> 8) & 0xFu;
+        const uint32_t opcode1 = (instruction >> 21) & 0x7u;
+        const uint32_t crn = (instruction >> 16) & 0xFu;
+        const uint32_t opcode2 = (instruction >> 5) & 0x7u;
+        const uint32_t crm = instruction & 0xFu;
+        if ((instruction & (1u << 20)) != 0u) {
+            uint32_t value = 0u;
+            if (!host_.OnCoprocessorRead(coprocessor, opcode1, crn, crm, opcode2, value)) {
+                return false;
+            }
+            if (rd == 15u) {
+                cpu_.cpsr = (cpu_.cpsr & 0x0FFFFFFFu) | (value & 0xF0000000u); // MRC to R15 sets NZCV only.
+            } else {
+                WriteArmRegister(rd, value);
+            }
+        } else {
+            const uint32_t value = rd == 15u ? fetch_pc + 4u : ReadArmRegister(rd, fetch_pc);
+            if (!host_.OnCoprocessorWrite(coprocessor, opcode1, crn, crm, opcode2, value)) {
+                return false;
+            }
+        }
+        cpu_.r[15] = next_pc;
+        return true;
+    }
+
+    handled = false;
+    return true;
+}
+
+
+void ArmCpu::LoadPcInterworking(uint32_t value) {
+    if (v5_) {
+        const bool thumb = (value & 1u) != 0u;
+        SetThumbState(thumb);
+        cpu_.r[15] = thumb ? (value & ~1u) : (value & ~3u);
+        return;
+    }
+    cpu_.r[15] = cpu_.thumb ? (value & ~1u) : (value & ~3u);
 }
 
 

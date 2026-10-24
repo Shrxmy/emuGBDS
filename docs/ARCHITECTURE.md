@@ -32,10 +32,17 @@ main.cpp
 | `ThumbExecute.cpp` | Thumb instruction families |
 
 `ArmCpu` reaches memory only through `arm::IBus` and asks its system for
-SWI handling through `arm::ICpuHost`. Interrupt delivery is the system's job:
-it decides when an IRQ is taken and calls `ArmCpu::EnterException`. Keep
-system-specific behavior (memory maps, BIOS emulation, IRQ registers) out of
-this module.
+SWI handling and coprocessor transfers (MRC/MCR) through `arm::ICpuHost`.
+Interrupt delivery is the system's job: it decides when an IRQ is taken and
+calls `ArmCpu::EnterException`. Keep system-specific behavior (memory maps,
+BIOS emulation, IRQ registers, CP15 state) out of this module.
+
+Each CPU is built for one `arm::ArmArchitecture`: `V4T` (ARM7TDMI: GBA, DS
+ARM7) or `V5TE` (ARM946E-S: DS ARM9). V5TE adds BLX, CLZ, the Q-saturating
+ALU ops, signed halfword multiplies, LDRD/STRD, PLD, MRC/MCR, and the ARMv5
+rules for loads into PC (interworking) and for LDM/STM with the base in the
+register list. Every ARMv5 behavior is gated on the architecture, so ARMv4
+decoding is unaffected.
 
 ## In-house GBA module boundaries
 

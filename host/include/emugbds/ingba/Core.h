@@ -89,7 +89,7 @@ private:
     std::array<uint32_t, kVideoPixelCount> video_buffer_{};
     std::array<VideoScanlineState, kVideoHeight> video_scanline_states_{};
     MemoryBus bus_{};
-    arm::ArmCpu cpu_{bus_, *this}; // Declared after bus_, which it references.
+    arm::ArmCpu cpu_{bus_, *this, arm::ArmArchitecture::V4T}; // Declared after bus_, which it references.
     bool initialized_ = false;
     bool rom_loaded_ = false;
     bool halted_ = false;

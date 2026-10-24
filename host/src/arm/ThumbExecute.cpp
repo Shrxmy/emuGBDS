@@ -76,7 +76,7 @@ bool ArmCpu::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t
     if ((instruction & 0xF800u) == 0xF000u) {
         // The BL prefix lives in LR, as on hardware, so it survives an IRQ between the halves.
         const int32_t upper = SignExtend(instruction & 0x07FFu, 11u) << 12u;
-        cpu_.r[14] = static_cast<uint32_t>(static_cast<int32_t>(fetch_pc) + upper);
+        cpu_.r[14] = fetch_pc + static_cast<uint32_t>(upper);
         cpu_.r[15] = next_pc;
         return true;
     }
@@ -88,6 +88,16 @@ bool ArmCpu::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t
         const uint32_t old_pc = cpu_.r[15];
         cpu_.r[15] = target & ~1u;
         RecordPcFlowEvent("THUMB.BL", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
+        return true;
+    }
+
+    if (v5_ && (instruction & 0xF800u) == 0xE800u) { // BLX suffix: like BL, then switch to ARM.
+        const uint32_t target = (cpu_.r[14] + ((instruction & 0x07FFu) << 1u)) & ~3u;
+        cpu_.r[14] = next_pc | 1u;
+        const uint32_t old_pc = cpu_.r[15];
+        SetThumbState(false);
+        cpu_.r[15] = target;
+        RecordPcFlowEvent("THUMB.BLX", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
         return true;
     }
 
@@ -346,7 +356,10 @@ bool ArmCpu::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t
                 RecordPcFlowEvent("THUMB.MOV.PC", pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
             }
             return true;
-        case 0x3: { // BX
+        case 0x3: { // BX, or BLX when MSBd is set (ARMv5)
+            if (v5_ && (instruction & 0x0080u) != 0u) {
+                cpu_.r[14] = next_pc | 1u; // rhs was read first, so BLX LR works.
+            }
             const bool next_thumb = (rhs & 1u) != 0u;
             SetThumbState(next_thumb);
             cpu_.r[15] = next_thumb ? (rhs & ~1u) : (rhs & ~3u);
@@ -529,10 +542,9 @@ bool ArmCpu::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t
                 }
                 const uint32_t value = bus_.Read32(address & ~3u);
                 if (reg == 15u) {
-                    const bool next_thumb = (value & 1u) != 0u;
-                    SetThumbState(next_thumb);
+                    // ARMv4 POP {PC} stays in Thumb and ignores bit 0; ARMv5 interworks.
                     const uint32_t old_pc = cpu_.r[15];
-                    cpu_.r[15] = next_thumb ? (value & ~1u) : (value & ~3u);
+                    LoadPcInterworking(value);
                     loaded_pc = true;
                     RecordPcFlowEvent("THUMB.POP.PC", old_pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
                 } else {
@@ -575,6 +587,7 @@ bool ArmCpu::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t
         }
 
         uint32_t address = cpu_.r[rn];
+        const uint32_t updated_base = cpu_.r[rn] + count * 4u;
         for (uint32_t reg = 0; reg < 8u; ++reg) {
             if ((reg_list & (1u << reg)) == 0u) {
                 continue;
@@ -582,7 +595,9 @@ bool ArmCpu::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t
             if (load) {
                 cpu_.r[reg] = bus_.Read32(address & ~3u);
             } else {
-                bus_.Write32(address & ~3u, cpu_.r[reg]);
+                // ARMv4 stores the written-back base unless the base is the first listed register.
+                const bool new_base = !v5_ && reg == rn && (reg_list & ((1u << rn) - 1u)) != 0u;
+                bus_.Write32(address & ~3u, new_base ? updated_base : cpu_.r[reg]);
             }
             address += 4u;
         }
@@ -607,7 +622,7 @@ bool ArmCpu::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t
         }
         if (ConditionPassed(cond << 28u)) {
             const int32_t offset = SignExtend(imm8, 8u) << 1u;
-            cpu_.r[15] = static_cast<uint32_t>(static_cast<int32_t>(fetch_pc) + offset);
+            cpu_.r[15] = fetch_pc + static_cast<uint32_t>(offset);
             RecordPcFlowEvent("THUMB.B.cond", pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
         } else {
             cpu_.r[15] = next_pc;
@@ -617,7 +632,7 @@ bool ArmCpu::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t
 
     if ((instruction & 0xF800u) == 0xE000u) {
         const int32_t offset = SignExtend(instruction & 0x07FFu, 11u) << 1u;
-        cpu_.r[15] = static_cast<uint32_t>(static_cast<int32_t>(fetch_pc) + offset);
+        cpu_.r[15] = fetch_pc + static_cast<uint32_t>(offset);
         RecordPcFlowEvent("THUMB.B", pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
         return true;
     }

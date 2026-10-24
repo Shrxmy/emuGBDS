@@ -1,3 +1,4 @@
+#include "emugbds/arm/ArmCpu.h"
 #include "emugbds/core/Types.h"
 #include "emugbds/cores/InHouseDsCoreAdapter.h"
 #include "emugbds/cores/InHouseGbaCoreAdapter.h"
@@ -760,6 +761,276 @@ void TestIngbaHaltWakesWithMaskedIrq(TestContext& t) {
     t.Expect((core.cpu().cpsr & 0x1Fu) == 0x1Fu, "masked IRQ wake leaves CPU in System mode");
     t.Expect(core.iflags() == 0x0001u, "masked VBlank request remains pending");
     t.Expect(core.IsRunning(), "HALT does not make the emulation core unavailable");
+}
+
+// Runs the shared ARM CPU directly on 64 KiB of flat RAM, with a CP15 stand-in.
+struct ArmCpuHarness final : emugbds::arm::ICpuHost {
+    struct RamBus final : emugbds::arm::IBus {
+        std::vector<uint8_t> ram = std::vector<uint8_t>(0x10000u, 0u);
+        uint8_t Read8(uint32_t a) const override { return ram[a & 0xFFFFu]; }
+        uint16_t Read16(uint32_t a) const override { return static_cast<uint16_t>(Read8(a) | (Read8(a + 1u) << 8u)); }
+        uint32_t Read32(uint32_t a) const override { return Read16(a) | (static_cast<uint32_t>(Read16(a + 2u)) << 16u); }
+        void Write8(uint32_t a, uint8_t v) override { ram[a & 0xFFFFu] = v; }
+        void Write16(uint32_t a, uint16_t v) override { Write8(a, static_cast<uint8_t>(v)); Write8(a + 1u, static_cast<uint8_t>(v >> 8u)); }
+        void Write32(uint32_t a, uint32_t v) override { Write16(a, static_cast<uint16_t>(v)); Write16(a + 2u, static_cast<uint16_t>(v >> 16u)); }
+    };
+
+    explicit ArmCpuHarness(emugbds::arm::ArmArchitecture architecture) : cpu(bus, *this, architecture) {
+        cpu.Reset(); // System mode, ARM state, PC = 0.
+    }
+    bool OnSoftwareInterrupt(uint8_t, uint32_t, bool, std::string&) override { return false; }
+    bool OnCoprocessorRead(uint32_t cp, uint32_t, uint32_t crn, uint32_t, uint32_t, uint32_t& value) override {
+        value = cp15_read_value + crn;
+        return cp == 15u;
+    }
+    bool OnCoprocessorWrite(uint32_t cp, uint32_t, uint32_t crn, uint32_t crm, uint32_t, uint32_t value) override {
+        cp15_written = (crn << 28u) | (crm << 24u) | (value & 0x00FFFFFFu);
+        return cp == 15u;
+    }
+    void Arm(std::initializer_list<uint32_t> words) {
+        uint32_t address = 0u;
+        for (uint32_t word : words) {
+            bus.Write32(address, word);
+            address += 4u;
+        }
+    }
+    void Run(uint32_t steps) {
+        std::string error;
+        for (uint32_t i = 0u; i < steps; ++i) {
+            cpu.Step(error);
+        }
+    }
+    emugbds::arm::CpuState& s() { return cpu.state(); }
+
+    RamBus bus;
+    emugbds::arm::ArmCpu cpu;
+    uint32_t cp15_read_value = 0x00012000u;
+    uint32_t cp15_written = 0u;
+};
+
+constexpr uint32_t kQFlag = 1u << 27u;
+
+void TestArmV5ClzAndSaturation(TestContext& t) {
+    using emugbds::arm::ArmArchitecture;
+    const uint32_t inputs[] = {0u, 1u, 0x80000000u, 0x00010000u};
+    const uint32_t expected[] = {32u, 31u, 0u, 15u};
+    for (size_t i = 0; i < 4u; ++i) {
+        ArmCpuHarness h(ArmArchitecture::V5TE);
+        h.Arm({0xE16F0F11u}); // CLZ r0, r1
+        h.s().r[1] = inputs[i];
+        h.Run(1u);
+        t.Expect(h.s().r[0] == expected[i], "ARMv5 CLZ counts leading zeros");
+    }
+
+    ArmCpuHarness q(ArmArchitecture::V5TE);
+    q.Arm({0xE1012050u, 0xE1213050u, 0xE1414050u}); // QADD r2,r0,r1 ; QSUB r3,r0,r1 ; QDADD r4,r0,r1
+    q.s().r[0] = 0x7FFFFFF0u;
+    q.s().r[1] = 0x00000100u;
+    q.Run(1u);
+    t.Expect(q.s().r[2] == 0x7FFFFFFFu, "ARMv5 QADD saturates at INT32_MAX");
+    t.Expect((q.s().cpsr & kQFlag) != 0u, "ARMv5 QADD sets Q on saturation");
+    q.s().cpsr &= ~kQFlag;
+    q.Run(1u);
+    t.Expect(q.s().r[3] == 0x7FFFFEF0u, "ARMv5 QSUB subtracts without saturating");
+    t.Expect((q.s().cpsr & kQFlag) == 0u, "ARMv5 QSUB leaves Q clear without saturation");
+    q.s().r[0] = 0u;
+    q.s().r[1] = 0xC0000000u; // Doubling -2^30 reaches INT32_MIN exactly.
+    q.Run(1u);
+    t.Expect(q.s().r[4] == 0x80000000u, "ARMv5 QDADD doubles the second operand");
+
+    ArmCpuHarness v4(ArmArchitecture::V4T);
+    v4.Arm({0xE16F0F11u});
+    v4.s().r[0] = 0x55u;
+    v4.s().r[1] = 1u;
+    v4.Run(1u);
+    t.Expect(v4.s().r[0] == 0x55u, "ARMv4 does not decode CLZ");
+}
+
+void TestArmV5HalfwordMultiplies(TestContext& t) {
+    using emugbds::arm::ArmArchitecture;
+    ArmCpuHarness h(ArmArchitecture::V5TE);
+    h.Arm({
+        0xE1600281u, // SMULBB r0, r1, r2
+        0xE16005A1u, // SMULTB r0, r1, r5
+        0xE1003281u, // SMLABB r0, r1, r2, r3
+        0xE12002A1u, // SMULWB r0, r1, r2
+        0xE1454281u, // SMLALBB r4, r5, r1, r2
+    });
+    h.s().r[1] = 0x0003FFFEu; // top = 3, bottom = -2
+    h.s().r[2] = 0x00000005u;
+    h.Run(1u);
+    t.Expect(h.s().r[0] == static_cast<uint32_t>(-10), "ARMv5 SMULBB multiplies signed bottom halves");
+    h.s().r[5] = 7u;
+    h.Run(1u);
+    t.Expect(h.s().r[0] == 21u, "ARMv5 SMULTB uses the top half of Rm");
+    h.s().r[3] = 0x7FFFFFFFu;
+    h.s().r[2] = 1u;
+    h.s().cpsr &= ~kQFlag;
+    h.Run(1u);
+    t.Expect(h.s().r[0] == 0x7FFFFFFDu, "ARMv5 SMLABB accumulates");
+    h.s().r[2] = 0x00000003u;
+    h.s().r[1] = 0x00020000u;
+    h.Run(1u);
+    t.Expect(h.s().r[0] == 6u, "ARMv5 SMULWB keeps the top 32 bits of the 48-bit product");
+    h.s().r[4] = 0xFFFFFFFFu;
+    h.s().r[5] = 0u;
+    h.s().r[1] = 0x00000002u;
+    h.s().r[2] = 0x00000003u;
+    h.Run(1u);
+    t.Expect(h.s().r[4] == 5u && h.s().r[5] == 1u, "ARMv5 SMLALBB carries into RdHi");
+
+    ArmCpuHarness overflow(ArmArchitecture::V5TE);
+    overflow.Arm({0xE1003281u}); // SMLABB r0, r1, r2, r3
+    overflow.s().r[1] = 2u;
+    overflow.s().r[2] = 1u;
+    overflow.s().r[3] = 0x7FFFFFFFu;
+    overflow.Run(1u);
+    t.Expect(overflow.s().r[0] == 0x80000001u, "ARMv5 SMLAxy wraps instead of saturating");
+    t.Expect((overflow.s().cpsr & kQFlag) != 0u, "ARMv5 SMLAxy sets Q on accumulate overflow");
+}
+
+void TestArmV5BranchesAndInterworking(TestContext& t) {
+    using emugbds::arm::ArmArchitecture;
+    ArmCpuHarness blx(ArmArchitecture::V5TE);
+    blx.Arm({0xFB000000u}); // BLX label with H=1: target = 0 + 8 + 2
+    blx.Run(1u);
+    t.Expect(blx.s().r[15] == 0x0Au && blx.s().thumb, "ARMv5 BLX label switches to Thumb at a halfword target");
+    t.Expect(blx.s().r[14] == 4u, "ARMv5 BLX label sets LR to the next ARM instruction");
+
+    ArmCpuHarness blx_reg(ArmArchitecture::V5TE);
+    blx_reg.Arm({0xE12FFF33u}); // BLX r3
+    blx_reg.s().r[3] = 0x101u;
+    blx_reg.Run(1u);
+    t.Expect(blx_reg.s().r[15] == 0x100u && blx_reg.s().thumb && blx_reg.s().r[14] == 4u, "ARMv5 BLX Rm calls with interworking");
+
+    ArmCpuHarness thumb_blx(ArmArchitecture::V5TE);
+    thumb_blx.bus.Write16(0x40u, 0xF000u); // BL prefix: LR = 0x44
+    thumb_blx.bus.Write16(0x42u, 0xE802u); // BLX suffix: target = (LR + 4) & ~3
+    thumb_blx.bus.Write16(0x44u, 0x4798u); // BLX r3 (hi-register form)
+    thumb_blx.s().r[15] = 0x40u;
+    thumb_blx.cpu.SetThumbState(true);
+    thumb_blx.Run(2u);
+    t.Expect(thumb_blx.s().r[15] == 0x48u && !thumb_blx.s().thumb, "ARMv5 Thumb BLX suffix switches to ARM");
+    t.Expect(thumb_blx.s().r[14] == 0x45u, "ARMv5 Thumb BLX suffix returns to Thumb");
+    thumb_blx.s().r[15] = 0x44u;
+    thumb_blx.cpu.SetThumbState(true);
+    thumb_blx.s().r[3] = 0x200u;
+    thumb_blx.Run(1u);
+    t.Expect(thumb_blx.s().r[15] == 0x200u && !thumb_blx.s().thumb && thumb_blx.s().r[14] == 0x47u, "ARMv5 Thumb BLX Rs calls ARM code");
+
+    for (const auto architecture : {ArmArchitecture::V4T, ArmArchitecture::V5TE}) {
+        const bool v5 = architecture == ArmArchitecture::V5TE;
+        ArmCpuHarness ldr(architecture);
+        ldr.Arm({0xE590F000u}); // LDR pc, [r0]
+        ldr.s().r[0] = 0x100u;
+        ldr.bus.Write32(0x100u, 0x301u);
+        ldr.Run(1u);
+        t.Expect(ldr.s().thumb == v5 && ldr.s().r[15] == 0x300u, "LDR pc interworks only on ARMv5");
+
+        ArmCpuHarness ldm(architecture);
+        ldm.Arm({0xE8908000u}); // LDMIA r0, {pc}
+        ldm.s().r[0] = 0x100u;
+        ldm.bus.Write32(0x100u, 0x301u);
+        ldm.Run(1u);
+        t.Expect(ldm.s().thumb == v5, "LDM {pc} interworks only on ARMv5");
+
+        ArmCpuHarness pop(architecture);
+        pop.bus.Write16(0x40u, 0xBD00u); // POP {pc}
+        pop.s().r[15] = 0x40u;
+        pop.s().r[13] = 0x100u;
+        pop.cpu.SetThumbState(true);
+        pop.bus.Write32(0x100u, 0x300u); // Bit 0 clear: ARMv5 returns to ARM, ARMv4 stays in Thumb.
+        pop.Run(1u);
+        t.Expect(pop.s().thumb == !v5 && pop.s().r[15] == 0x300u, "Thumb POP {pc} interworks only on ARMv5");
+    }
+
+    ArmCpuHarness nv(ArmArchitecture::V4T);
+    nv.Arm({0xFB000000u});
+    nv.Run(1u);
+    t.Expect(nv.s().r[15] == 4u && !nv.s().thumb, "ARMv4 treats cond=1111 as never");
+}
+
+void TestArmMemoryAdditions(TestContext& t) {
+    using emugbds::arm::ArmArchitecture;
+    ArmCpuHarness d(ArmArchitecture::V5TE);
+    d.Arm({0xE1C020D0u, 0xE1C120F0u}); // LDRD r2, [r0] ; STRD r2, [r1]
+    d.s().r[0] = 0x100u;
+    d.s().r[1] = 0x200u;
+    d.bus.Write32(0x100u, 0x11111111u);
+    d.bus.Write32(0x104u, 0x22222222u);
+    d.Run(2u);
+    t.Expect(d.s().r[2] == 0x11111111u && d.s().r[3] == 0x22222222u, "ARMv5 LDRD loads a register pair");
+    t.Expect(d.bus.Read32(0x200u) == 0x11111111u && d.bus.Read32(0x204u) == 0x22222222u, "ARMv5 STRD stores a register pair");
+
+    for (const auto architecture : {ArmArchitecture::V4T, ArmArchitecture::V5TE}) {
+        ArmCpuHarness swap(architecture);
+        swap.Arm({0xE1002091u, 0xE1403091u}); // SWP r2, r1, [r0] ; SWPB r3, r1, [r0]
+        swap.s().r[0] = 0x100u;
+        swap.s().r[1] = 0xAABBCCDDu;
+        swap.bus.Write32(0x100u, 0x12345678u);
+        swap.Run(1u);
+        t.Expect(swap.s().r[2] == 0x12345678u && swap.bus.Read32(0x100u) == 0xAABBCCDDu, "SWP exchanges a word");
+        swap.Run(1u);
+        t.Expect(swap.s().r[3] == 0xDDu && swap.bus.Read8(0x100u) == 0xDDu, "SWPB exchanges a byte");
+    }
+
+    ArmCpuHarness pld(ArmArchitecture::V5TE);
+    pld.Arm({0xF5D0F000u}); // PLD [r0]
+    pld.Run(1u);
+    t.Expect(pld.s().r[15] == 4u && pld.cpu.unsupported_arm_stats().generic == 0u, "ARMv5 PLD is a no-op");
+
+    // Base register inside the list.
+    for (const auto architecture : {ArmArchitecture::V4T, ArmArchitecture::V5TE}) {
+        const bool v5 = architecture == ArmArchitecture::V5TE;
+        ArmCpuHarness ldm_first(architecture);
+        ldm_first.Arm({0xE8B00003u}); // LDMIA r0!, {r0, r1}: base is not the last register
+        ldm_first.s().r[0] = 0x100u;
+        ldm_first.bus.Write32(0x100u, 0x55u);
+        ldm_first.Run(1u);
+        t.Expect(ldm_first.s().r[0] == (v5 ? 0x108u : 0x55u), "LDM base-in-list writeback follows the architecture");
+
+        ArmCpuHarness ldm_last(architecture);
+        ldm_last.Arm({0xE8B10003u}); // LDMIA r1!, {r0, r1}: base is the last register
+        ldm_last.s().r[1] = 0x100u;
+        ldm_last.bus.Write32(0x104u, 0x66u);
+        ldm_last.Run(1u);
+        t.Expect(ldm_last.s().r[1] == 0x66u, "LDM keeps a loaded base that is the last register");
+
+        ArmCpuHarness stm(architecture);
+        stm.Arm({0xE8A10003u}); // STMIA r1!, {r0, r1}: base is not the first register
+        stm.s().r[1] = 0x100u;
+        stm.Run(1u);
+        t.Expect(stm.bus.Read32(0x104u) == (v5 ? 0x100u : 0x108u), "STM stores the old base on ARMv5, the new one on ARMv4");
+
+        ArmCpuHarness thumb_stm(architecture);
+        thumb_stm.bus.Write16(0x40u, 0xC103u); // STMIA r1!, {r0, r1}
+        thumb_stm.s().r[15] = 0x40u;
+        thumb_stm.s().r[1] = 0x100u;
+        thumb_stm.cpu.SetThumbState(true);
+        thumb_stm.Run(1u);
+        t.Expect(thumb_stm.bus.Read32(0x104u) == (v5 ? 0x100u : 0x108u), "Thumb STMIA base-in-list follows the architecture");
+    }
+}
+
+void TestArmV5CoprocessorTransfers(TestContext& t) {
+    using emugbds::arm::ArmArchitecture;
+    ArmCpuHarness h(ArmArchitecture::V5TE);
+    h.Arm({
+        0xEE110F10u, // MRC p15, 0, r0, c1, c0, 0
+        0xEE091F11u, // MCR p15, 0, r1, c9, c1, 0
+        0xEE11FF10u, // MRC p15, 0, r15, c1, c0, 0: flags only
+        0xEE110E10u, // MRC p14, ...: absent coprocessor
+    });
+    h.s().r[1] = 0x00ABCDEFu;
+    h.cp15_read_value = 0xA0000000u;
+    h.Run(1u);
+    t.Expect(h.s().r[0] == 0xA0000001u, "ARMv5 MRC reads a coprocessor register through the host");
+    h.Run(1u);
+    t.Expect(h.cp15_written == 0x91ABCDEFu, "ARMv5 MCR writes a coprocessor register through the host");
+    h.Run(1u);
+    t.Expect((h.s().cpsr >> 28u) == 0xAu && h.s().r[15] == 12u, "ARMv5 MRC to r15 copies only NZCV");
+    h.Run(1u);
+    t.Expect(h.cpu.unsupported_arm_stats().generic == 1u, "ARMv5 MRC to an absent coprocessor is unsupported");
 }
 
 void TestIngbaApuFifoMixing(TestContext& t) {
@@ -2005,7 +2276,12 @@ int RunUnitTests() {
         void (*fn)(TestContext&);
     };
 
-    const std::array<NamedTest, 39> tests = {{
+    const std::array<NamedTest, 44> tests = {{
+        {"arm_v5_clz_and_saturation", &TestArmV5ClzAndSaturation},
+        {"arm_v5_halfword_multiplies", &TestArmV5HalfwordMultiplies},
+        {"arm_v5_branches_and_interworking", &TestArmV5BranchesAndInterworking},
+        {"arm_memory_additions", &TestArmMemoryAdditions},
+        {"arm_v5_coprocessor_transfers", &TestArmV5CoprocessorTransfers},
         {"ingba_memory_bus", &TestIngbaMemoryBus},
         {"ingba_core_run_frame", &TestIngbaCoreRunFrame},
         {"ingba_cpu_fiq_banking", &TestIngbaCpuFiqBanking},

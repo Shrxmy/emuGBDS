@@ -1,6 +1,7 @@
 #pragma once
 
-// ARM7TDMI interpreter shared by the in-house GBA core and, later, the DS CPUs.
+// ARM interpreter shared by the in-house GBA core and the DS CPUs: ARMv4T for the
+// ARM7TDMI (GBA, DS ARM7) and ARMv5TE for the ARM946E-S (DS ARM9).
 // Memory goes through IBus; system-specific behavior goes through ICpuHost.
 
 #include "emugbds/arm/Bus.h"
@@ -11,12 +12,26 @@
 
 namespace emugbds::arm {
 
+enum class ArmArchitecture {
+    V4T,  // ARM7TDMI
+    V5TE, // ARM946E-S
+};
+
 class ICpuHost {
 public:
     virtual ~ICpuHost() = default;
     // Called for every SWI: the host enters its BIOS vector or emulates the call.
     // Returns false when the call is unsupported.
     virtual bool OnSoftwareInterrupt(uint8_t swi_imm, uint32_t next_pc, bool from_thumb, std::string& error) = 0;
+    // MRC/MCR (ARMv5TE only). Return false when the coprocessor or register does not exist.
+    virtual bool OnCoprocessorRead(uint32_t /*coprocessor*/, uint32_t /*opcode1*/, uint32_t /*crn*/,
+                                   uint32_t /*crm*/, uint32_t /*opcode2*/, uint32_t& /*value*/) {
+        return false;
+    }
+    virtual bool OnCoprocessorWrite(uint32_t /*coprocessor*/, uint32_t /*opcode1*/, uint32_t /*crn*/,
+                                    uint32_t /*crm*/, uint32_t /*opcode2*/, uint32_t /*value*/) {
+        return false;
+    }
 };
 
 class ArmCpu {
@@ -29,7 +44,8 @@ public:
         uint64_t software_interrupt = 0;
     };
 
-    ArmCpu(IBus& bus, ICpuHost& host) noexcept : bus_(bus), host_(host) {}
+    ArmCpu(IBus& bus, ICpuHost& host, ArmArchitecture architecture) noexcept
+        : bus_(bus), host_(host), v5_(architecture == ArmArchitecture::V5TE) {}
     ArmCpu(const ArmCpu&) = delete;
     ArmCpu& operator=(const ArmCpu&) = delete;
 
@@ -79,6 +95,13 @@ private:
     bool ExecuteArmMultiplyLong(uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, std::string& error);
     bool ExecuteArmBlockDataTransfer(uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, std::string& error);
     bool ExecuteArmSoftwareInterrupt(uint32_t instruction, uint32_t next_pc, std::string& error);
+    bool ExecuteArmSwap(uint32_t instruction, uint32_t next_pc);
+    // ARMv5TE: cond=1111 space (BLX immediate, PLD).
+    bool ExecuteArmUnconditional(uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, std::string& error);
+    // ARMv5TE: BLX reg, CLZ, QADD family, halfword multiplies, MRC/MCR. Sets handled when it decoded one.
+    bool ExecuteArmV5Instruction(uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, bool& handled);
+    // Writes a loaded value to PC; ARMv5 switches to Thumb when bit 0 is set, ARMv4 keeps the state.
+    void LoadPcInterworking(uint32_t value);
     bool ExecuteSoftwareInterrupt(uint8_t swi_imm, uint32_t next_pc, bool from_thumb, std::string& error) {
         return host_.OnSoftwareInterrupt(swi_imm, next_pc, from_thumb, error);
     }
@@ -116,6 +139,7 @@ private:
 
     IBus& bus_;
     ICpuHost& host_;
+    bool v5_ = false;
     CpuState cpu_{};
     uint64_t trace_frame_ = 0;
     uint64_t unknown_arm_instruction_count_ = 0;

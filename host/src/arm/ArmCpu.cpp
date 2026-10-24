@@ -26,9 +26,19 @@ bool ArmCpu::Step(std::string& error) {
     const uint32_t instruction = bus_.Read32(pc);
     const uint32_t next_pc = pc + 4;
 
+    if (v5_ && (instruction >> 28u) == 0xFu) {
+        return ExecuteArmUnconditional(instruction, fetch_pc, next_pc, error); // ARMv4 treats cond=1111 as never.
+    }
     if (!ConditionPassed(instruction)) {
         cpu_.r[15] = next_pc;
         return true;
+    }
+    if (v5_) {
+        bool handled = false;
+        const bool ok = ExecuteArmV5Instruction(instruction, fetch_pc, next_pc, handled);
+        if (handled) {
+            return ok || HandleUnsupportedArm(UnsupportedArmClass::Generic, next_pc, error);
+        }
     }
 
     if ((instruction & 0x0FFFFFF0u) == 0x012FFF10u) {
@@ -48,7 +58,7 @@ bool ArmCpu::Step(std::string& error) {
         if ((instruction & (1u << 24)) != 0u) {
             cpu_.r[14] = next_pc;
         }
-        cpu_.r[15] = static_cast<uint32_t>(static_cast<int32_t>(fetch_pc) + signed_offset);
+        cpu_.r[15] = fetch_pc + static_cast<uint32_t>(signed_offset);
 #ifndef NDEBUG
         RecordPcFlowEvent("ARM.B/BL", pc, cpu_.r[15], instruction, cpu_.cpsr, cpu_.r[14], cpu_.r[13], trace_frame_);
 #endif
@@ -64,6 +74,9 @@ bool ArmCpu::Step(std::string& error) {
 
     const uint32_t top2 = (instruction >> 26) & 0x3u;
     if (top2 == 0x0u) {
+        if ((instruction & 0x0FB00FF0u) == 0x01000090u) {
+            return ExecuteArmSwap(instruction, next_pc);
+        }
         const bool maybe_msr_imm =
             ((instruction & 0x0FB00000u) == 0x03200000u) &&
             (((instruction >> 12u) & 0xFu) == 0xFu);
