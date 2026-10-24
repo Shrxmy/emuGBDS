@@ -2092,8 +2092,8 @@ void TestIndsMemoryBus(TestContext& t) {
 
     t.Expect(arm9.Read32(0x04000400u) == 0u, "inds unemulated I/O reads as zero");
     t.Expect(bus.arm9_unmapped().reads.count(0x04000400u) == 1u, "inds logs unemulated I/O reads");
-    arm9.Write16(0x05000000u, 0x7FFFu);
-    t.Expect(bus.arm9_unmapped().writes.count(0x05000000u) == 1u, "inds logs writes to unemulated memory by block");
+    arm9.Write16(0x0B000000u, 0x7FFFu);
+    t.Expect(bus.arm9_unmapped().writes.count(0x0B000000u) == 1u, "inds logs writes to unemulated memory by block");
 
     bus.ClearSlot2Rom();
     t.Expect(arm9.Read8(kDsSlot2Base) == 0x00, "inds clear slot2 ROM removes mapping");
@@ -2335,6 +2335,35 @@ void TestIndsSpiDevices(TestContext& t) {
 
     arm7.Write16(0x04000504u, 0x0200u);
     t.Expect(arm7.Read16(0x04000504u) == 0x0200u, "SOUNDBIAS keeps the value the BIOS ramps");
+}
+
+void TestIndsVramBanking(TestContext& t) {
+    emugbds::inds::MemoryBus bus;
+    auto& arm9 = bus.arm9();
+    auto& arm7 = bus.arm7();
+    arm9.Write8(0x04000240u, 0x80u); // A: LCDC
+    arm9.Write16(0x06800010u, 0x1234u);
+    t.Expect(arm9.Read16(0x06800010u) == 0x1234u, "VRAM A in LCDC mode is read/write at 6800000h");
+    arm9.Write8(0x06800010u, 0xFFu);
+    t.Expect(arm9.Read16(0x06800010u) == 0x1234u, "ARM9 byte writes to VRAM are ignored");
+    t.Expect(bus.video().LcdcBank16(0u, 8u) == 0x1234u, "VRAM display reads an LCDC bank by pixel");
+    arm9.Write8(0x04000240u, 0x89u); // A: engine A BG, offset 1
+    t.Expect(arm9.Read16(0x06800010u) == 0u, "a bank leaves LCDC when remapped");
+    t.Expect(arm9.Read16(0x06020010u) == 0x1234u, "engine A BG offset 1 maps the bank at 6020000h");
+    t.Expect(arm9.Read16(0x06020010u + 0x80000u) == 0x1234u, "engine A BG VRAM mirrors every 512 KiB");
+    t.Expect(bus.video().Read16(emugbds::inds::VideoMemory::Area::EngineABg, 0x20010u) == 0x1234u,
+        "the display reads the same BG VRAM");
+    arm9.Write8(0x04000242u, 0x82u); // C: ARM7
+    arm7.Write8(0x06000003u, 0x5Au);
+    t.Expect(arm7.Read8(0x06000003u) == 0x5Au, "VRAM C in ARM7 mode takes ARM7 byte writes");
+    t.Expect((arm7.Read8(0x04000240u) & 3u) == 1u, "VRAMSTAT shows bank C allocated to the ARM7");
+    arm9.Write8(0x04000249u, 0x81u); // I: engine B BG at 6208000h
+    arm9.Write16(0x06208000u, 0xBEEFu);
+    t.Expect(bus.video().Read16(emugbds::inds::VideoMemory::Area::EngineBBg, 0x8000u) == 0xBEEFu,
+        "VRAMCNT_I at 4000249h maps bank I to engine B BG at 6208000h");
+    arm9.Write16(0x05000402u, 0x7FFFu);
+    t.Expect(arm9.Read16(0x05000C02u) == 0x7FFFu && bus.video().Palette(1, false, 1u) == 0x7FFFu,
+        "palette RAM mirrors every 2 KiB; 5000400h is engine B's BG palette");
 }
 
 void TestIndsMathUnit(TestContext& t) {
@@ -2618,6 +2647,146 @@ void TestIndsCoreFirmwareSlot2Transition(TestContext& t) {
     }
 }
 
+// With both BIOS images and a firmware image, ds-firmware runs the BIOS from reset instead of
+// simulating the Slot-2 pick; the ARM7 BIOS here writes HALTCNT GBA mode (or just loops).
+void TestIndsCoreRealFirmwareBoot(TestContext& t) {
+    const auto dir = MakeTempRoot() / "inds-core-real-firmware";
+    std::filesystem::create_directories(dir);
+    const auto slot2 = dir / "test.gba";
+    WriteFile(slot2, BuildSyntheticGbaRom());
+    std::vector<uint8_t> bios9(0x1000u, 0u);
+    WriteWordLe(bios9, 0x0u, EncodeBranchRelativeWords(-2)); // FFFF0000h: B .
+    WriteFile(dir / "bios9.bin", bios9);
+    std::vector<uint8_t> loop7(0x4000u, 0u);
+    WriteWordLe(loop7, 0x0u, EncodeBranchRelativeWords(-2));
+    WriteFile(dir / "loop7.bin", loop7);
+    std::vector<uint8_t> gba7(0x4000u, 0u);
+    WriteWordLe(gba7, 0x00u, 0xE3A00404u); // MOV r0, #04000000h
+    WriteWordLe(gba7, 0x04u, 0xE2800C03u); // ADD r0, r0, #300h
+    WriteWordLe(gba7, 0x08u, 0xE3A01040u); // MOV r1, #40h (GBA mode)
+    WriteWordLe(gba7, 0x0Cu, 0xE5C01001u); // STRB r1, [r0, #1] -> HALTCNT
+    WriteWordLe(gba7, 0x10u, EncodeBranchRelativeWords(-2));
+    WriteFile(dir / "gba7.bin", gba7);
+    WriteFile(dir / "firmware.bin", BuildBytes(0x40000u, 0xF0));
+
+    for (const char* bios7 : {"loop7.bin", "gba7.bin"}) {
+        emugbds::inds::Core core;
+        std::string error;
+        const bool setup = core.Configure(dir / bios7, dir / "bios9.bin", dir / "firmware.bin",
+                               emugbds::core::DsBootMode::DsFirmware, false, error) &&
+            core.Initialize(error) && core.LoadSlot2Rom(slot2, error) && core.LoadPrimaryRom({}, error);
+        t.Expect(setup, "inds core sets up a real firmware boot");
+        std::optional<emugbds::core::TransitionEvent> transition;
+        for (int frame = 0; frame < 3 && setup && !transition.has_value(); ++frame) {
+            t.Expect(core.RunFrame(error), "inds firmware boot runs a frame");
+            transition = core.PollTransition();
+        }
+        if (std::string(bios7) == "loop7.bin") {
+            t.Expect(!transition.has_value(), "a real firmware boot never fakes the Slot-2 pick");
+            t.Expect(core.arm9().r[15] - 0xFFFF0000u < 0x10u, "the ARM9 starts at its BIOS reset vector");
+        } else {
+            t.Expect(transition.has_value() && transition->reason.find("HALTCNT") != std::string::npos,
+                "the BIOS writing HALTCNT GBA mode hands over to the GBA core");
+        }
+    }
+}
+
+void TestIndsKeysAndTouch(TestContext& t) {
+    const auto dir = MakeTempRoot() / "inds-touch";
+    std::filesystem::create_directories(dir);
+    std::vector<uint8_t> image(0x40000u, 0u);
+    // Newer user settings copy (update counter 1 at 3FF70h vs 0): ADC (100,200)-(3100,2200) at pixels (10,10)-(210,110).
+    const size_t user = 0x3FF00u;
+    image[0x3FE70u] = 0u;
+    image[user + 0x70u] = 1u;
+    const uint8_t cal[12] = {100, 0, 200, 0, 10, 10, 0x1C, 0x0C, 0x98, 0x08, 210, 110};
+    std::copy(std::begin(cal), std::end(cal), image.begin() + static_cast<std::ptrdiff_t>(user + 0x58u));
+    WriteFile(dir / "firmware.bin", image);
+
+    emugbds::inds::Core core;
+    std::string error;
+    t.Expect(core.Configure(std::nullopt, std::nullopt, dir / "firmware.bin", emugbds::core::DsBootMode::Direct, false, error) &&
+            core.Initialize(error),
+        "inds core loads a firmware image for touch calibration");
+    auto& arm7 = const_cast<emugbds::inds::MemoryBus&>(core.memory()).arm7();
+    using emugbds::input::GbaKey;
+    using emugbds::input::GbaKeyMask;
+    core.SetKeys(GbaKeyMask(GbaKey::A) | GbaKeyMask(GbaKey::X));
+    t.Expect(arm7.Read16(0x04000130u) == (0x03FFu & ~1u), "KEYINPUT shows A pressed (0 = pressed)");
+    t.Expect((arm7.Read16(0x04000136u) & 0x43u) == 0x42u, "EXTKEYIN shows X pressed, Y released, pen up");
+
+    core.SetTouch(true, 110u, 60u); // midway between the calibration points
+    t.Expect((arm7.Read16(0x04000136u) & 0x40u) == 0u, "EXTKEYIN shows the pen down");
+    auto convert = [&](uint8_t control) {
+        auto exchange = [&](uint16_t spicnt, uint8_t out) {
+            arm7.Write16(0x040001C0u, spicnt);
+            arm7.Write16(0x040001C2u, out);
+            return static_cast<uint8_t>(arm7.Read16(0x040001C2u));
+        };
+        constexpr uint16_t kTouchHold = 0x8000u | 0x0200u | 0x0800u;
+        exchange(kTouchHold, control);
+        const uint8_t high = exchange(kTouchHold, 0u);
+        const uint8_t low = exchange(0x8000u | 0x0200u, 0u);
+        return static_cast<uint16_t>((high << 5u) | (low >> 3u));
+    };
+    t.Expect(convert(0xD1u) == 1600u, "touchscreen X conversion inverts the firmware calibration");
+    t.Expect(convert(0x91u) == 1200u, "touchscreen Y conversion inverts the firmware calibration");
+    core.SetTouch(false, 0u, 0u);
+    t.Expect((arm7.Read16(0x04000136u) & 0x40u) != 0u && convert(0xD1u) == 0u, "lifting the pen reads as up and 0");
+}
+
+void TestIndsEngine2dRendering(TestContext& t) {
+    emugbds::inds::MemoryBus bus;
+    auto& arm9 = bus.arm9();
+    std::array<uint32_t, 256> line{};
+    auto& engine = bus.engine(0);
+    engine.RenderLine(0u, true, line.data());
+    t.Expect(line[0] == 0xFFFFFFFFu, "display mode 0 shows a white line");
+
+    arm9.Write8(0x04000240u, 0x81u);                 // VRAM A: engine A BG at 6000000h
+    arm9.Write8(0x04000241u, 0x82u);                 // VRAM B: engine A OBJ at 6400000h
+    arm9.Write16(0x05000000u, 0x0000u);              // backdrop black
+    arm9.Write16(0x05000002u, 0x001Fu);              // BG palette 1: red
+    arm9.Write16(0x05000202u, 0x7C00u);              // OBJ palette 1: blue
+    arm9.Write16(0x04000008u, 0x0100u);              // BG0CNT: char base 0, screen base 2 KiB, 16 colours
+    arm9.Write16(0x06000800u, 0x0001u);              // map entry (0,0) = tile 1
+    for (uint32_t i = 0u; i < 32u; ++i) {
+        arm9.Write16(0x06000020u + i * 2u, 0x1111u); // tile 1: all colour 1
+        arm9.Write16(0x06400020u + i * 2u, 0x1111u); // OBJ tile 1
+    }
+    arm9.Write32(0x04000000u, 0x00011110u);          // graphics display, BG0 + OBJ, 1D OBJ mapping
+    arm9.Write16(0x07000000u, 0x0000u);              // OBJ 0: y=0, 8x8
+    arm9.Write16(0x07000002u, 0x0004u);              // x=4
+    arm9.Write16(0x07000004u, 0x0001u);              // tile 1, priority 0
+    engine.RenderLine(0u, true, line.data());
+    t.Expect(line[0] == 0xFF0000FFu, "a text BG tile draws its palette colour (red)");
+    t.Expect(line[4] == 0xFFFF0000u, "an OBJ draws over a BG of equal priority (blue)");
+    t.Expect(line[12] == 0xFF000000u, "beyond the tile and OBJ the backdrop shows");
+    for (uint32_t i = 0u; i < 32u; ++i) {
+        arm9.Write16(0x06400040u + i * 2u, 0x0101u); // 2D 256-colour OBJ data at tile 2 (64 bytes): colour 1
+    }
+    arm9.Write32(0x04000000u, 0x00011100u);          // 2D OBJ mapping
+    arm9.Write16(0x07000000u, 0x2000u);              // 256 colours
+    arm9.Write16(0x07000004u, 0x0003u);              // odd tile 3: bit 0 ignored -> tile 2
+    engine.RenderLine(0u, true, line.data());
+    t.Expect(line[4] == 0xFFFF0000u, "a 256-colour 2D OBJ ignores tile number bit 0");
+    arm9.Write32(0x04000000u, 0x00011110u);
+    arm9.Write16(0x07000000u, 0x0000u);
+    arm9.Write16(0x07000004u, 0x0001u);
+    arm9.Write16(0x0400006Cu, 0x8010u);              // master brightness down, factor 16
+    engine.RenderLine(0u, true, line.data());
+    t.Expect(line[0] == 0xFF000000u, "master brightness down 16 makes black");
+    arm9.Write16(0x0400006Cu, 0u);
+
+    arm9.Write8(0x04000242u, 0x80u);                 // VRAM C: LCDC
+    arm9.Write16(0x06840000u + (2u * 256u + 3u) * 2u, 0x03E0u); // pixel (3, 2): green
+    arm9.Write32(0x04000000u, 0x00020000u | (2u << 18)); // VRAM display of bank C
+    engine.RenderLine(2u, true, line.data());
+    t.Expect(line[3] == 0xFF00FF00u, "VRAM display mode shows the LCDC bank as a bitmap");
+    engine.RenderLine(2u, false, line.data());
+    t.Expect(line[3] == 0xFFFFFFFFu, "a powered-off engine shows white");
+}
+
 void TestIndsCoreDirectNdsBoot(TestContext& t) {
     const auto dir = MakeTempRoot() / "inds-core-nds";
     std::filesystem::create_directories(dir);
@@ -2768,7 +2937,7 @@ int RunUnitTests() {
         void (*fn)(TestContext&);
     };
 
-    const std::array<NamedTest, 56> tests = {{
+    const std::array<NamedTest, 60> tests = {{
         {"arm_v5_clz_and_saturation", &TestArmV5ClzAndSaturation},
         {"arm_v5_halfword_multiplies", &TestArmV5HalfwordMultiplies},
         {"arm_v5_branches_and_interworking", &TestArmV5BranchesAndInterworking},
@@ -2816,10 +2985,14 @@ int RunUnitTests() {
         {"inds_irq_wakes_halted_arm9", &TestIndsIrqWakesHaltedArm9},
         {"inds_empty_card_slot", &TestIndsEmptyCardSlot},
         {"inds_spi_devices", &TestIndsSpiDevices},
+        {"inds_vram_banking", &TestIndsVramBanking},
         {"inds_math_unit", &TestIndsMathUnit},
         {"inds_rtc", &TestIndsRtc},
         {"inds_haltcnt_gba_mode_transition", &TestIndsHaltcntGbaModeTransition},
         {"inds_core_firmware_slot2_transition", &TestIndsCoreFirmwareSlot2Transition},
+        {"inds_core_real_firmware_boot", &TestIndsCoreRealFirmwareBoot},
+        {"inds_keys_and_touch", &TestIndsKeysAndTouch},
+        {"inds_engine2d_rendering", &TestIndsEngine2dRendering},
         {"inds_core_direct_nds_boot", &TestIndsCoreDirectNdsBoot},
         {"runtime_kernel_inject_input_to_gba", &TestRuntimeKernelInjectInputToGba},
         {"runtime_kernel_provides_gba_video", &TestRuntimeKernelProvidesGbaVideo},

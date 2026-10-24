@@ -2,6 +2,7 @@
 
 #include "emugbds/core/IEmuCore.h"
 #include "emugbds/inds/Core.h"
+#include "emugbds/runtime/Types.h"
 
 #include <memory>
 #include <optional>
@@ -21,6 +22,10 @@ public:
     bool SetSecondaryRom(const std::filesystem::path& rom_path, std::string& error) override;
     std::optional<core::TransitionEvent> PollTransition() override;
 
+    void ApplyInput(const runtime::InputSnapshot& input) noexcept;
+    // Both screens stacked (top, then bottom).
+    bool GetVideoFrame(runtime::VideoFrame& out_frame) const noexcept;
+
     // Read-only view for bring-up diagnostics.
     const inds::Core& core() const noexcept { return *core_; }
 
@@ -36,6 +41,7 @@ private:
     std::optional<std::filesystem::path> slot2_rom_path_;
     core::DsBootMode ds_boot_mode_ = core::DsBootMode::Auto;
     bool trace_transition_ = false;
+    uint32_t held_keys_ = 0;
 };
 
 } // namespace emugbds::cores

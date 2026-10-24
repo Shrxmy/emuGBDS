@@ -49,7 +49,8 @@ DS with NDS ROM:
 .\build\Release\emugbds.exe --mode ds --nds .\roms\SomeGame.nds --frames 300
 ```
 
-DS firmware Slot-2 transition:
+DS firmware Slot-2 transition (the real firmware needs input, so use `--interactive`;
+without the NDS BIOS/firmware files this simulates the pick and switches after two frames):
 
 ```powershell
 .\build\Release\emugbds.exe --mode ds --slot2 .\roms\Fire_Emblem.gba --boot-mode ds-firmware --trace-transition --frames 300
@@ -90,6 +91,8 @@ Then inspect:
 - Arrow keys = D-pad
 - `A` = L
 - `S` = R
+- `D` = X, `C` = Y (DS)
+- Left mouse button on the bottom screen = DS touchscreen
 - `Esc` = Quit
 
 ## SDL2 Runtime Note

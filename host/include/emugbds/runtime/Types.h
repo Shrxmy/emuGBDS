@@ -92,6 +92,10 @@ struct InputSnapshot {
     // Bit masks use emugbds::input::GbaKey values.
     uint32_t gba_press_mask = 0;
     uint32_t gba_release_mask = 0;
+    // DS touchscreen: the pen position on the bottom screen in pixels.
+    bool touch_down = false;
+    uint32_t touch_x = 0;
+    uint32_t touch_y = 0;
 };
 
 } // namespace emugbds::runtime

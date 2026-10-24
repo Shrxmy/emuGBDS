@@ -68,7 +68,9 @@ coordinate modules rather than grow new device implementations.
 | `Ipc.cpp` | IPCSYNC and the two IPC FIFOs with their edge-triggered IRQs |
 | `Timers.cpp` | one CPU's four 33.51 MHz timers with cascade and overflow IRQs |
 | `GameCard.cpp` | Slot-1 card bus registers, card DMA and transfer IRQ (empty slot only) |
-| `Spi.cpp` | ARM7 SPI bus: firmware flash (in-memory copy), power management, touchscreen stub |
+| `Spi.cpp` | ARM7 SPI bus: firmware flash (in-memory copy), power management, touchscreen X/Y conversions |
+| `VideoMemory.cpp` | VRAM banks A-I and VRAMCNT mapping, palettes, OAM, extended palette slots |
+| `Engine2d.cpp` | one 2D engine: registers and a scanline renderer (BGs, OBJs, windows, blending, brightness) |
 | `Rtc.cpp` | ARM7 bit-banged Seiko RTC on 4000138h, host clock |
 | `MathUnit.cpp` | ARM9 divider and square root |
 | `Cp15.cpp` | ARM9 CP15: ID and control registers, TCM regions, wait for interrupt |
@@ -76,7 +78,10 @@ coordinate modules rather than grow new device implementations.
 The ARM9's CP15 is owned by the memory object because its TCM settings decide
 the ARM9 memory map. I/O is dispatched per 32-bit register word with a byte-lane
 mask, so side effects (FIFO pops) happen once per access. A loaded cartridge is
-always direct-booted; the firmware menu is not emulated. When the ARM7 writes
+always direct-booted. Without a cartridge, ds-firmware boot runs the real BIOS
+and firmware when all three images are present (otherwise it simulates the
+Slot-2 pick). Both engines render each visible line at H-Blank start into a
+256x384 frame (top screen above bottom, routed by POWCNT1). When the ARM7 writes
 HALTCNT power-down mode 1 (GBA mode), the DS core raises the DS -> GBA
 transition, the same event the runtime uses for Slot-2 boot.
 

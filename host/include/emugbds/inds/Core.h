@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <vector>
 #include <string>
 
 namespace emugbds::inds {
@@ -43,6 +44,14 @@ public:
     bool arm9_halted() const noexcept { return arm9_halted_; }
     bool arm7_halted() const noexcept { return arm7_halted_; }
     uint64_t frame_counter() const noexcept { return frame_counter_; }
+    // Both screens, top above bottom, as ABGR8888 (256 x 384).
+    static constexpr uint32_t kScreenWidth = 256u;
+    static constexpr uint32_t kScreenHeight = 192u;
+    const uint32_t* frame_pixels() const noexcept { return frame_.data(); }
+    // Input: held buttons as input::GbaKey bits (X in bit 10, Y in 11), and the pen on the
+    // bottom screen in pixels; the touchscreen reports it through the firmware's calibration.
+    void SetKeys(uint32_t held) noexcept { bus_.io().SetKeys(held); }
+    void SetTouch(bool down, uint32_t x, uint32_t y);
     std::optional<nds::NdsCartridgeHeaderInfo> nds_header() const noexcept { return nds_header_; }
     std::optional<gba::GbaCartridgeHeaderInfo> slot2_header() const noexcept { return slot2_header_; }
 
@@ -68,6 +77,9 @@ private:
     // Raises the LCD line-start and H-Blank events in (from, to] (frame-relative ARM7 cycles).
     void AdvanceLcd(uint32_t from, uint32_t to);
     bool ShouldRequestFirmwareSlot2Transition() const noexcept;
+    // Renders visible line `line` of both engines into the screen POWCNT1 routes each to.
+    void RenderLine(uint32_t line);
+    void DumpFrameIfRequested() const;
 
     MemoryBus bus_{};
     CpuHost arm9_host_{*this, true};
@@ -84,12 +96,14 @@ private:
     bool trace_transition_ = false;
     bool nds_rom_loaded_ = false;
     bool slot2_rom_loaded_ = false;
-    bool cpus_active_ = false; // Only a direct-booted cartridge runs code; the firmware menu is not emulated.
+    bool cpus_active_ = false;      // A direct-booted cartridge or the real firmware is running.
+    bool firmware_running_ = false; // Real BIOS/firmware boot (otherwise ds-firmware simulates the Slot-2 pick)
     bool arm9_halted_ = false;
     bool arm7_halted_ = false;
     core::DsBootMode boot_mode_ = core::DsBootMode::Auto;
     uint64_t frame_counter_ = 0;
     uint64_t firmware_menu_frame_counter_ = 0;
+    std::vector<uint32_t> frame_ = std::vector<uint32_t>(kScreenWidth * kScreenHeight * 2u, 0xFF000000u);
 };
 
 } // namespace emugbds::inds

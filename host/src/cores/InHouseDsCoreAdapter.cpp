@@ -134,6 +134,25 @@ bool InHouseDsCoreAdapter::SetSecondaryRom(const std::filesystem::path& rom_path
     return true;
 }
 
+void InHouseDsCoreAdapter::ApplyInput(const runtime::InputSnapshot& input) noexcept {
+    held_keys_ = (held_keys_ | input.gba_press_mask) & ~input.gba_release_mask;
+    core_->SetKeys(held_keys_);
+    core_->SetTouch(input.touch_down, input.touch_x, input.touch_y);
+}
+
+
+bool InHouseDsCoreAdapter::GetVideoFrame(runtime::VideoFrame& out_frame) const noexcept {
+    if (!IsRunning()) {
+        return false;
+    }
+    out_frame.format = runtime::PixelFormat::ABGR8888;
+    out_frame.width = inds::Core::kScreenWidth;
+    out_frame.height = inds::Core::kScreenHeight * 2u;
+    out_frame.pixels = core_->frame_pixels();
+    return true;
+}
+
+
 std::optional<core::TransitionEvent> InHouseDsCoreAdapter::PollTransition() {
     return core_->PollTransition();
 }

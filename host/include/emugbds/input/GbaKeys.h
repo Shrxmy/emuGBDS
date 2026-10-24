@@ -15,6 +15,8 @@ enum class GbaKey : uint8_t {
     Down = 7,
     R = 8,
     L = 9,
+    X = 10, // DS only
+    Y = 11, // DS only
 };
 
 constexpr uint32_t GbaKeyMask(GbaKey key) {

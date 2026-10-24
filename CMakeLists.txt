@@ -86,6 +86,8 @@ set(EMUGBDS_INHOUSE_DS_SOURCES
     host/src/inds/Spi.cpp
     host/src/inds/MathUnit.cpp
     host/src/inds/Rtc.cpp
+    host/src/inds/VideoMemory.cpp
+    host/src/inds/Engine2d.cpp
     host/src/inds/Ipc.cpp
     host/src/inds/Timers.cpp
 )

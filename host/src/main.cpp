@@ -44,7 +44,7 @@ void PrintUsage() {
     std::cout
         << "emuGBDS - unified DS/GBA host prototype\n"
         << "Usage:\n"
-        << "  emugbds [--mode auto|ds|gba] [--gba-core auto|internal] [--nds <rom.nds>] [--gba <rom.gba>] [--slot2 <rom.gba>] [--bios-gba <bios.bin>] [--no-bios-gba] [--bios-nds7 <biosnds7.bin>] [--bios-nds9 <biosnds9.bin>] [--firmware-nds <firmware.bin>] [--boot-mode auto|ds-firmware|direct|bios] [--trace-transition] [--frames N] [--interactive] [--uncapped] [--debug-stats]\n";
+        << "  emugbds [--mode auto|ds|gba] [--gba-core auto|internal] [--nds <rom.nds>] [--gba <rom.gba>] [--slot2 <rom.gba>] [--bios-gba <bios.bin>] [--no-bios-gba] [--bios-nds7 <biosnds7.bin>] [--bios-nds9 <biosnds9.bin>] [--firmware-nds <firmware.bin>] [--boot-mode auto|ds-firmware|direct] [--trace-transition] [--frames N] [--interactive] [--uncapped] [--debug-stats]\n";
 }
 
 bool ParseMode(const std::string& text, emugbds::core::ModeHint& out_mode) {
@@ -74,10 +74,6 @@ bool ParseDsBootMode(const std::string& text, emugbds::core::DsBootMode& out_mod
     }
     if (text == "direct") {
         out_mode = emugbds::core::DsBootMode::Direct;
-        return true;
-    }
-    if (text == "bios") {
-        out_mode = emugbds::core::DsBootMode::Bios;
         return true;
     }
     return false;
@@ -273,6 +269,10 @@ uint32_t KeyMaskFromScancode(SDL_Scancode scancode) {
         return GbaKeyMask(GbaKey::L);
     case SDL_SCANCODE_S:
         return GbaKeyMask(GbaKey::R);
+    case SDL_SCANCODE_D:
+        return GbaKeyMask(GbaKey::X);
+    case SDL_SCANCODE_C:
+        return GbaKeyMask(GbaKey::Y);
     default:
         return 0u;
     }
@@ -299,7 +299,7 @@ bool RunInteractive(
     }
 
     SDL_Window* window = SDL_CreateWindow(
-        "emuGBDS (GBA Interactive)",
+        "emuGBDS",
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
         240 * 3,
@@ -355,6 +355,17 @@ bool RunInteractive(
     bool running = true;
     uint32_t held_mask = 0u;
     uint32_t previous_mask = 0u;
+    // The texture (and window) follow the frame size: GBA 240x160, DS both screens 256x384.
+    uint32_t texture_width = 240u;
+    uint32_t texture_height = 160u;
+    SDL_RenderSetLogicalSize(renderer, static_cast<int>(texture_width), static_cast<int>(texture_height));
+    // DS touchscreen: the left mouse button on the bottom screen (mouse events arrive in frame pixels).
+    bool mouse_down = false;
+    int mouse_x = 0;
+    int mouse_y = 0;
+    bool previous_touch = false;
+    uint32_t previous_touch_x = 0u;
+    uint32_t previous_touch_y = 0u;
     const bool frame_limit_enabled = options.frames_explicit;
     const auto frame_target = std::chrono::duration<double>(1.0 / 59.7275);
 
@@ -379,6 +390,14 @@ bool RunInteractive(
                 if (event.key.repeat == 0) {
                     held_mask &= ~KeyMaskFromScancode(event.key.keysym.scancode);
                 }
+            } else if ((event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP) &&
+                       event.button.button == SDL_BUTTON_LEFT) {
+                mouse_down = event.type == SDL_MOUSEBUTTONDOWN;
+                mouse_x = event.button.x;
+                mouse_y = event.button.y;
+            } else if (event.type == SDL_MOUSEMOTION) {
+                mouse_x = event.motion.x;
+                mouse_y = event.motion.y;
             }
         }
         if (!running) {
@@ -389,7 +408,19 @@ bool RunInteractive(
         input.gba_press_mask = held_mask & ~previous_mask;
         input.gba_release_mask = previous_mask & ~held_mask;
         previous_mask = held_mask;
-        if (input.gba_press_mask != 0u || input.gba_release_mask != 0u) {
+        constexpr int kDsScreenHeight = 192;
+        input.touch_down = mouse_down && texture_height == 2u * kDsScreenHeight && mouse_y >= kDsScreenHeight &&
+            mouse_y < 2 * kDsScreenHeight && mouse_x >= 0 && mouse_x < static_cast<int>(texture_width);
+        if (input.touch_down) {
+            input.touch_x = static_cast<uint32_t>(mouse_x);
+            input.touch_y = static_cast<uint32_t>(mouse_y - kDsScreenHeight);
+        }
+        const bool touch_changed = input.touch_down != previous_touch ||
+            (input.touch_down && (input.touch_x != previous_touch_x || input.touch_y != previous_touch_y));
+        previous_touch = input.touch_down;
+        previous_touch_x = input.touch_x;
+        previous_touch_y = input.touch_y;
+        if (input.gba_press_mask != 0u || input.gba_release_mask != 0u || touch_changed) {
             if (!kernel.InjectInput(input, error)) {
                 SDL_DestroyTexture(texture);
                 SDL_DestroyRenderer(renderer);
@@ -416,6 +447,25 @@ bool RunInteractive(
         kernel.PollOutputs(output);
         if (output.video.has_value() && output.video->pixels != nullptr) {
             const auto& frame = *output.video;
+            if (frame.width != texture_width || frame.height != texture_height) {
+                SDL_Texture* resized = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING,
+                    static_cast<int>(frame.width), static_cast<int>(frame.height));
+                if (!resized) {
+                    error = std::string("SDL_CreateTexture failed: ") + SDL_GetError();
+                    SDL_DestroyTexture(texture);
+                    SDL_DestroyRenderer(renderer);
+                    SDL_DestroyWindow(window);
+                    SDL_Quit();
+                    return false;
+                }
+                SDL_DestroyTexture(texture);
+                texture = resized;
+                texture_width = frame.width;
+                texture_height = frame.height;
+                SDL_RenderSetLogicalSize(renderer, static_cast<int>(texture_width), static_cast<int>(texture_height));
+                const int scale = texture_height > 200u ? 2 : 3; // DS screens stack to 384 lines
+                SDL_SetWindowSize(window, static_cast<int>(texture_width) * scale, static_cast<int>(texture_height) * scale);
+            }
             SDL_UpdateTexture(texture, nullptr, frame.pixels, static_cast<int>(frame.width * sizeof(uint32_t)));
             SDL_RenderClear(renderer);
             SDL_RenderCopy(renderer, texture, nullptr, nullptr);

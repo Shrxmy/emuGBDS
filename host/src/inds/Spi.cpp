@@ -68,8 +68,7 @@ uint8_t Spi::Transfer(uint8_t out, std::vector<uint8_t>& firmware) {
     switch (device_) {
     case Device::PowerManagement: in = PowerTransfer(out); break;
     case Device::Firmware: in = FirmwareTransfer(out, firmware); break;
-    // shortcut: the pen is never down, so every touchscreen conversion reads 0.
-    case Device::Touchscreen: break;
+    case Device::Touchscreen: in = TouchscreenTransfer(out); break;
     default: break; // Reserved device: nothing answers.
     }
     ++position_;
@@ -142,6 +141,27 @@ uint8_t Spi::FirmwareTransfer(uint8_t out, std::vector<uint8_t>& firmware) {
     default:
         return 0u; // Deep power-down / release and unknown instructions
     }
+}
+
+
+uint8_t Spi::TouchscreenTransfer(uint8_t out) noexcept {
+    // The 12-bit result follows a control byte: bits 11-5 in the next byte, bits 4-0 (then zeros) in the one after.
+    uint8_t in = 0u;
+    if (sample_phase_ == 2u) {
+        in = static_cast<uint8_t>(sample_ >> 5u);
+    } else if (sample_phase_ == 1u) {
+        in = static_cast<uint8_t>(sample_ << 3u);
+    }
+    if (sample_phase_ != 0u) {
+        --sample_phase_;
+    }
+    if ((out & 0x80u) != 0u) { // Start bit: a control byte begins a conversion
+        const uint32_t channel = (out >> 4u) & 7u;
+        // shortcut: only X (5) and Y (1) positions are measured; pressure, temperature, and AUX read 0.
+        sample_ = !pen_down_ ? 0u : channel == 5u ? adc_x_ : channel == 1u ? adc_y_ : 0u;
+        sample_phase_ = 2u;
+    }
+    return in;
 }
 
 

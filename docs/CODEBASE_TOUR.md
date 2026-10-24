@@ -92,6 +92,7 @@ the single source-of-truth when adding a new GBA module.
 - I/O, IPC, timers, and devices:
   - `host/include/emugbds/inds/Io.h`, `Ipc.h`, `Timers.h`, `GameCard.h`, `Spi.h`, `Rtc.h`, `MathUnit.h`
   - `host/src/inds/Io.cpp`, `Ipc.cpp`, `Timers.cpp`, `GameCard.cpp`, `Spi.cpp`, `Rtc.cpp`, `MathUnit.cpp`
+- Video: `VideoMemory.h/.cpp` (VRAM banks, palettes, OAM), `Engine2d.h/.cpp` (2D engines)
 
 Current DS core status:
 - ARM9 (ARMv5TE) and ARM7 (ARMv4T) execute real code, interleaved 2:1.
@@ -103,9 +104,11 @@ Current DS core status:
 - An ARM7 HALTCNT GBA-mode write switches the console to the GBA core.
 - Empty cartridge slot, SPI firmware flash/power management, RTC, math unit.
 - Unemulated I/O, IME/IE/IF and halt state are listed by `--debug-stats` in DS mode.
-- `--boot-mode bios` runs the real BIOS and firmware from reset; it reaches the
-  first screens and waits for input (no video or touch yet).
-- Without a cartridge, ds-firmware mode keeps the simulated Slot-2 GBA handoff.
+- Without a cartridge, ds-firmware boot runs the real BIOS and firmware when
+  all three images are present: the menu renders, takes buttons and touch, and
+  "Start GBA game" hands off to the GBA core through HALTCNT. Without the
+  images it simulates the Slot-2 pick.
+- VRAM banking, palettes, OAM, and both 2D engines (no 3D, mosaic, or capture).
 
 ## 6) Boot Policy (Default BIOS Paths)
 

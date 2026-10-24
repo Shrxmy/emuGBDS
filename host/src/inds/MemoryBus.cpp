@@ -77,6 +77,10 @@ void MemoryBus::ResetMemory() {
     }
     wramcnt_ = 3u; // Power-on: all shared WRAM belongs to the ARM7.
     cp15_.Reset();
+    video_.Reset();
+    for (Engine2d& engine : engines_) {
+        engine.Reset();
+    }
     io_.Reset();
     arm9_unmapped_ = {};
     arm7_unmapped_ = {};
@@ -103,6 +107,10 @@ uint8_t* MemoryBus::Arm9Pointer(uint32_t address, bool write, bool use_tcm) {
         case 2u: return &shared_wram_[address & 0x3FFFu];
         default: return nullptr; // No WRAM allocated to the ARM9.
         }
+    case 0x05u:
+    case 0x06u:
+    case 0x07u:
+        return video_.CpuPointer(true, address);
     case 0x08u:
     case 0x09u:
         return !write && !slot2_rom_.empty() ? &slot2_rom_[(address - kSlot2Base) % slot2_rom_.size()] : nullptr;
@@ -132,6 +140,8 @@ uint8_t* MemoryBus::Arm7Pointer(uint32_t address, bool write) {
         case 2u: return &shared_wram_[0x4000u + (address & 0x3FFFu)];
         default: return &shared_wram_[address & 0x7FFFu];
         }
+    case 0x06u:
+        return video_.CpuPointer(false, address); // VRAM C/D in ARM7 mode
     case 0x08u:
     case 0x09u:
         return !write && !slot2_rom_.empty() ? &slot2_rom_[(address - kSlot2Base) % slot2_rom_.size()] : nullptr;
@@ -177,6 +187,9 @@ void MemoryBus::Write(bool arm9, uint32_t address, uint32_t value, uint32_t size
             Write(arm9, address + i, (value >> (8u * i)) & 0xFFu, 1u, use_tcm);
         }
         return;
+    }
+    if (arm9 && size == 1u && (address >> 24u) >= 0x05u && (address >> 24u) <= 0x07u) {
+        return; // The ARM9 cannot write single bytes to palette, VRAM, or OAM.
     }
     if (uint8_t* bytes = arm9 ? Arm9Pointer(address, true, use_tcm) : Arm7Pointer(address, true)) {
         for (uint32_t i = 0u; i < size; ++i) {

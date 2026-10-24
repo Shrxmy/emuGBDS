@@ -3,6 +3,8 @@
 #include "emugbds/arm/CpuConstants.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <utility>
@@ -192,6 +194,7 @@ bool Core::RunFrame(std::string& error) {
     }
 
     ++frame_counter_;
+    DumpFrameIfRequested();
 
     if (ShouldRequestFirmwareSlot2Transition()) {
         ++firmware_menu_frame_counter_;
@@ -240,6 +243,70 @@ bool Core::RunCpu(arm::ArmCpu& cpu, int index, uint32_t steps, std::string& erro
 }
 
 
+void Core::SetTouch(bool down, uint32_t x, uint32_t y) {
+    uint16_t adc_x = 0u;
+    uint16_t adc_y = 0u;
+    if (down) {
+        // Invert the firmware's ADC-to-pixel mapping from its two calibration points (user settings 58h-63h).
+        const std::vector<uint8_t>& firmware = bus_.firmware_image();
+        int32_t adc1[2] = {0, 0}, adc2[2] = {4095, 4095}, scr1[2] = {0, 0}, scr2[2] = {255, 191};
+        if (firmware.size() >= 0x20000u) {
+            const size_t first = firmware.size() - 0x200u;
+            const auto read16 = [&](size_t at) { return static_cast<int32_t>(firmware[at] | (firmware[at + 1u] << 8u)); };
+            // The copy with the newer update counter (7-bit, wrapping) holds the current settings.
+            const uint32_t count0 = static_cast<uint32_t>(read16(first + 0x70u));
+            const uint32_t count1 = static_cast<uint32_t>(read16(first + 0x170u));
+            const size_t user = first + (((count1 - count0) & 0x7Fu) == 1u ? 0x100u : 0u);
+            const int32_t cal[8] = {read16(user + 0x58u), read16(user + 0x5Au), firmware[user + 0x5Cu], firmware[user + 0x5Du],
+                read16(user + 0x5Eu), read16(user + 0x60u), firmware[user + 0x62u], firmware[user + 0x63u]};
+            if (cal[0] != cal[4] && cal[1] != cal[5] && cal[2] != cal[6] && cal[3] != cal[7]) {
+                adc1[0] = cal[0]; adc1[1] = cal[1]; scr1[0] = cal[2]; scr1[1] = cal[3];
+                adc2[0] = cal[4]; adc2[1] = cal[5]; scr2[0] = cal[6]; scr2[1] = cal[7];
+            }
+        }
+        const auto to_adc = [&](uint32_t axis, uint32_t pixel) {
+            const int32_t adc = adc1[axis] + (static_cast<int32_t>(pixel) - scr1[axis]) * (adc2[axis] - adc1[axis]) / (scr2[axis] - scr1[axis]);
+            return static_cast<uint16_t>(std::clamp(adc, 0, 4095));
+        };
+        adc_x = to_adc(0u, std::min(x, kScreenWidth - 1u));
+        adc_y = to_adc(1u, std::min(y, kScreenHeight - 1u));
+    }
+    bus_.io().SetTouch(down, adc_x, adc_y);
+}
+
+
+void Core::RenderLine(uint32_t line) {
+    const uint16_t powcnt = bus_.io().powcnt(0);
+    uint32_t* top = &frame_[line * kScreenWidth];
+    uint32_t* bottom = &frame_[(kScreenHeight + line) * kScreenWidth];
+    if ((powcnt & 1u) == 0u) {
+        std::fill(top, top + kScreenWidth, 0xFF000000u); // LCDs off
+        std::fill(bottom, bottom + kScreenWidth, 0xFF000000u);
+        return;
+    }
+    const bool a_on_top = (powcnt & 0x8000u) != 0u; // POWCNT1 display swap
+    bus_.engine(0).RenderLine(line, (powcnt & 2u) != 0u, a_on_top ? top : bottom);
+    bus_.engine(1).RenderLine(line, (powcnt & 0x200u) != 0u, a_on_top ? bottom : top);
+}
+
+
+void Core::DumpFrameIfRequested() const {
+    // Debug aid: EMUGBDS_DUMP_DS_FRAME=N writes both screens of frame N to build/debug-ds-frame.ppm.
+    const char* dump_frame = std::getenv("EMUGBDS_DUMP_DS_FRAME");
+    if (dump_frame == nullptr || std::strtoull(dump_frame, nullptr, 10) != frame_counter_) {
+        return;
+    }
+    if (FILE* output = std::fopen("build/debug-ds-frame.ppm", "wb")) {
+        std::fprintf(output, "P6\n%u %u\n255\n", kScreenWidth, kScreenHeight * 2u);
+        for (uint32_t color : frame_) {
+            const uint8_t rgb[3] = {static_cast<uint8_t>(color), static_cast<uint8_t>(color >> 8u), static_cast<uint8_t>(color >> 16u)};
+            std::fwrite(rgb, sizeof(rgb), 1u, output);
+        }
+        std::fclose(output);
+    }
+}
+
+
 void Core::AdvanceLcd(uint32_t from, uint32_t to) {
     Io& io = bus_.io();
     for (uint32_t line = from / kCyclesPerLine; line * kCyclesPerLine <= to; ++line) {
@@ -249,6 +316,9 @@ void Core::AdvanceLcd(uint32_t from, uint32_t to) {
         }
         const uint32_t hblank = line_start + kHBlankStartCycle;
         if (hblank > from && hblank <= to) {
+            if (line < kScreenHeight) {
+                RenderLine(line); // The line is drawn by the time H-Blank starts.
+            }
             io.StartHBlank();
         }
     }
@@ -265,6 +335,7 @@ bool Core::Reset(std::string& error) {
     arm9_halted_ = false;
     arm7_halted_ = false;
     cpus_active_ = false;
+    firmware_running_ = false;
     pending_transition_.reset();
     firmware_menu_frame_counter_ = 0;
 
@@ -278,8 +349,11 @@ bool Core::Reset(std::string& error) {
     } else {
         arm9_.state().r[15] = bus_.HasBios9() ? MemoryBus::kArm9BiosBase : MemoryBus::kMainRamBase;
         arm7_.state().r[15] = bus_.HasBios7() ? 0u : MemoryBus::kMainRamBase;
-        // BIOS boot: both CPUs start at their reset vectors and run the real BIOS and firmware.
-        cpus_active_ = boot_mode_ == core::DsBootMode::Bios && bus_.HasBios9() && bus_.HasBios7();
+        // Firmware boot: both CPUs start at their reset vectors and run the real BIOS and firmware,
+        // whose menu starts a Slot-2 game by writing HALTCNT GBA mode.
+        firmware_running_ = boot_mode_ == core::DsBootMode::DsFirmware && bus_.HasBios9() && bus_.HasBios7() &&
+            bus_.HasFirmware();
+        cpus_active_ = firmware_running_;
     }
 
     running_ = configured_;
@@ -333,8 +407,8 @@ std::optional<core::TransitionEvent> Core::PollTransition() {
 }
 
 bool Core::ShouldRequestFirmwareSlot2Transition() const noexcept {
-    if (boot_mode_ != core::DsBootMode::DsFirmware) {
-        return false;
+    if (boot_mode_ != core::DsBootMode::DsFirmware || firmware_running_) {
+        return false; // The real firmware makes its own choice.
     }
     if (!slot2_rom_loaded_ || nds_rom_loaded_) {
         return false;

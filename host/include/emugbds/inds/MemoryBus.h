@@ -5,8 +5,11 @@
 
 #include "emugbds/arm/Bus.h"
 #include "emugbds/inds/Cp15.h"
+#include "emugbds/inds/Engine2d.h"
 #include "emugbds/inds/Io.h"
+#include "emugbds/inds/VideoMemory.h"
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <map>
@@ -80,6 +83,9 @@ public:
     // The ARM9's CP15 lives here because its TCM settings decide the ARM9 memory map.
     Cp15& cp15() noexcept { return cp15_; }
     const Cp15& cp15() const noexcept { return cp15_; }
+    VideoMemory& video() noexcept { return video_; }
+    const VideoMemory& video() const noexcept { return video_; }
+    Engine2d& engine(int index) noexcept { return engines_[index]; }
     Io& io() noexcept { return io_; }
     const Io& io() const noexcept { return io_; }
     arm::IBus& arm9() noexcept { return arm9_view_; }
@@ -121,6 +127,8 @@ private:
     std::vector<uint8_t> slot2_rom_;
     uint8_t wramcnt_ = 3u;
     Cp15 cp15_{};
+    VideoMemory video_{};
+    std::array<Engine2d, 2> engines_{Engine2d{video_, 0}, Engine2d{video_, 1}};
     Io io_{*this};
     View arm9_view_{*this, true};
     View arm7_view_{*this, false};

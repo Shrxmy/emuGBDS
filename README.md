@@ -53,11 +53,17 @@ In-house DS ROM run:
 .\build\Release\emugbds.exe --mode ds --nds .\roms\Fire_Emblem_Shadow_Dragon.nds --frames 300
 ```
 
-DS firmware Slot-2 handoff (no `.nds` inserted, transition to GBA):
+DS firmware menu with a GBA game in Slot-2 (no `.nds` inserted). With
+`bios/nds-bios/biosnds7.bin`, `biosnds9.bin`, and `dsfirmware.bin` present, the
+real BIOS and firmware run; pick "Start GBA game" (tap it, or press A) and the
+firmware hands the console to the GBA core:
 
 ```powershell
-.\build\Release\emugbds.exe --mode ds --slot2 .\roms\Fire_Emblem.gba --boot-mode ds-firmware --trace-transition --frames 300
+.\build\Release\emugbds.exe --mode ds --slot2 .\roms\Fire_Emblem.gba --interactive
 ```
+
+Without those files, `ds-firmware` boot simulates the menu and switches to GBA
+after two frames (`--trace-transition --frames 300` shows it headless).
 
 Interactive controls:
 
@@ -68,6 +74,8 @@ Interactive controls:
 - Arrow keys = D-pad
 - `A` = `L`
 - `S` = `R`
+- `D` = `X`, `C` = `Y` (DS)
+- Left mouse button on the bottom screen = DS touchscreen
 - `Esc` = exit interactive loop
 
 ## Test

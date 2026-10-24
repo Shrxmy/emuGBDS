@@ -1,5 +1,6 @@
 #include "emugbds/runtime/RuntimeKernel.h"
 
+#include "emugbds/cores/InHouseDsCoreAdapter.h"
 #include "emugbds/cores/InHouseGbaCoreAdapter.h"
 
 #include <iostream>
@@ -141,6 +142,11 @@ bool RuntimeKernel::Tick(TickResult& result, std::string& error) {
                 last_output_.audio = audio;
             }
         }
+    } else if (const auto* inhouse_ds = dynamic_cast<const cores::InHouseDsCoreAdapter*>(active_core_)) {
+        VideoFrame frame{};
+        if (inhouse_ds->GetVideoFrame(frame)) {
+            last_output_.video = frame;
+        }
     }
     result.status = TickStatus::FrameAdvanced;
 
@@ -186,6 +192,8 @@ bool RuntimeKernel::InjectInput(const InputSnapshot& input, std::string& error) 
         if (auto* inhouse_gba = dynamic_cast<cores::InHouseGbaCoreAdapter*>(active_core_)) {
             inhouse_gba->ApplyInputMasks(input.gba_press_mask, input.gba_release_mask);
         }
+    } else if (auto* inhouse_ds = dynamic_cast<cores::InHouseDsCoreAdapter*>(active_core_)) {
+        inhouse_ds->ApplyInput(input);
     }
     return true;
 }

@@ -34,10 +34,10 @@ Run GBA with debug stats:
 .\build\Release\emugbds.exe --mode gba --gba .\roms\Fire_Emblem.gba --gba-core internal --frames 600 --debug-stats
 ```
 
-Run DS firmware Slot-2 handoff test:
+Run the DS firmware menu with a Slot-2 GBA game (tap "Start GBA game" or press A):
 
 ```powershell
-.\build\Release\emugbds.exe --mode ds --slot2 .\roms\Fire_Emblem.gba --boot-mode ds-firmware --trace-transition --frames 300
+.\build\Release\emugbds.exe --mode ds --slot2 .\roms\Fire_Emblem.gba --interactive
 ```
 
 ## Important Notes

@@ -6,6 +6,8 @@ namespace emugbds::inds {
 namespace {
 
 constexpr uint32_t kDispStat = 0x04000004u;  // + VCOUNT in the upper half
+constexpr uint32_t kEngineA = 0x04000000u;   // 2D engine registers (ARM9); engine B at +1000h
+constexpr uint32_t kEngineB = 0x04001000u;
 constexpr uint32_t kDmaFirst = 0x040000B0u;
 constexpr uint32_t kDmaLast = 0x040000DCu;
 constexpr uint32_t kDmaFillFirst = 0x040000E0u;
@@ -41,9 +43,14 @@ constexpr uint32_t kSoundCaptureCnt = 0x04000508u;
 
 constexpr uint16_t kDispStatWritable = 0xFFB8u; // IRQ enables, LYC bit 8, LYC
 constexpr uint16_t kKeysReleased = 0x03FFu;
-// shortcut: no DS input is wired yet, so buttons, X/Y, and the pen read as released; hinge open.
-constexpr uint16_t kExtKeysReleased = 0x007Fu;
+constexpr uint16_t kExtKeysReleased = 0x007Fu; // X, Y, debug, and pen up; hinge open (bit 7 = 0)
+constexpr uint16_t kExtPenUp = 1u << 6;
 constexpr uint32_t kDmaEnable = 1u << 31;
+
+bool EngineRegister(uint32_t address) noexcept {
+    return (address >= kEngineA && address < kEngineA + Engine2d::kRegisterBytes) ||
+        (address >= kEngineB && address < kEngineB + Engine2d::kRegisterBytes);
+}
 
 } // namespace
 
@@ -60,10 +67,11 @@ void Io::Reset() {
     rtc_.Reset();
     sound_ = {};
     dma_fill_ = {};
-    vramcnt_ = {};
     exmem_shared_ = 0u;
     wifiwaitcnt_ = 0u;
     rcnt_ = 0u;
+    held_keys_ = 0u;
+    pen_down_ = false;
     vcount_ = 0u;
     arm7_halt_requested_ = false;
     gba_mode_requested_ = false;
@@ -94,6 +102,10 @@ bool Io::ReadWord(int cpu, uint32_t address, uint32_t mask, uint32_t& value) {
         value = self.timers.ReadWord(address - kTimerFirst);
         return true;
     }
+    if (cpu == 0 && address != kDispStat && EngineRegister(address)) {
+        value = memory_.engine(address >= kEngineB ? 1 : 0).ReadWord(address & 0xFFFu);
+        return true;
+    }
     if (address >= kCardFirst && address <= kCardLast) {
         value = cpu == CardOwner() ? card_.ReadWord(address - kCardFirst) : 0u; // EXMEMCNT gives the slot to one CPU
         return true;
@@ -122,13 +134,13 @@ bool Io::ReadWord(int cpu, uint32_t address, uint32_t mask, uint32_t& value) {
         value = self.dispstat | (static_cast<uint32_t>(vcount_) << 16u);
         return true;
     case kKeyInput:
-        value = kKeysReleased | (static_cast<uint32_t>(self.keycnt) << 16u);
+        value = (kKeysReleased & ~held_keys_) | (static_cast<uint32_t>(self.keycnt) << 16u); // 0 = pressed
         return true;
     case kRcntExtKey:
         if (cpu != 1) {
             return false;
         }
-        value = rcnt_ | (static_cast<uint32_t>(kExtKeysReleased) << 16u);
+        value = rcnt_ | (static_cast<uint32_t>(ExtKeys()) << 16u);
         return true;
     case kRtc:
         value = rtc_.Read();
@@ -159,7 +171,7 @@ bool Io::ReadWord(int cpu, uint32_t address, uint32_t mask, uint32_t& value) {
         value = self.iflags;
         return true;
     case kVramCntAD:
-        value = cpu == 0 ? 0u : static_cast<uint32_t>(memory_.wramcnt()) << 8u; // VRAMCNT is write-only
+        value = cpu == 0 ? 0u : memory_.video().vramstat() | (static_cast<uint32_t>(memory_.wramcnt()) << 8u); // VRAMCNT is write-only
         return true;
     case kVramCntEG:
         if (cpu != 0) {
@@ -194,6 +206,10 @@ bool Io::WriteWord(int cpu, uint32_t address, uint32_t value, uint32_t mask) {
     }
     if (address >= kTimerFirst && address <= kTimerLast) {
         self.timers.WriteWord(address - kTimerFirst, value, mask);
+        return true;
+    }
+    if (cpu == 0 && address != kDispStat && EngineRegister(address)) {
+        memory_.engine(address >= kEngineB ? 1 : 0).WriteWord(address & 0xFFFu, value, mask);
         return true;
     }
     if (address >= kCardFirst && address <= kCardLast) {
@@ -291,8 +307,8 @@ bool Io::WriteWord(int cpu, uint32_t address, uint32_t value, uint32_t mask) {
             const uint32_t index = (address - kVramCntAD) + lane;
             if (index == 7u) {
                 memory_.set_wramcnt(byte); // 4000247h WRAMCNT
-            } else if (index < vramcnt_.size()) {
-                vramcnt_[index] = byte;
+            } else if (index < 10u) {
+                memory_.video().SetBankControl(index < 7u ? index : index - 1u, byte); // 4000248h-249h are H and I
             }
         }
         return true;
@@ -457,6 +473,12 @@ void Io::PumpCardDma() {
         }
     }
     RaiseCardIrq();
+}
+
+
+uint16_t Io::ExtKeys() const noexcept {
+    uint16_t keys = kExtKeysReleased & ~static_cast<uint16_t>((held_keys_ >> 10u) & 3u); // X, Y
+    return pen_down_ ? static_cast<uint16_t>(keys & ~kExtPenUp) : keys;
 }
 
 
