@@ -11,6 +11,8 @@ Current state:
 
 Start with: `docs/README.md`
 
+Architecture overview: `docs/ARCHITECTURE.md`
+
 ## Build
 
 ```powershell

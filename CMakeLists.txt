@@ -46,20 +46,32 @@ if(EMUGBDS_ENABLE_MELONDS)
     if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/melonDS-master")
         message(WARNING "EMUGBDS_ENABLE_MELONDS=ON but melonDS-master directory is missing; DS third-party integration will be disabled.")
     else()
-    set(ENABLE_JIT OFF CACHE BOOL "" FORCE)
-    set(ENABLE_GDBSTUB OFF CACHE BOOL "" FORCE)
-    set(ENABLE_OGLRENDERER OFF CACHE BOOL "" FORCE)
-    set(BUILD_QT_SDL OFF CACHE BOOL "" FORCE)
-    set(DIRENT_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/host/third_party/dirent" CACHE PATH "" FORCE)
-    add_subdirectory(melonDS-master EXCLUDE_FROM_ALL)
-    if(TARGET core)
-        set_target_properties(core PROPERTIES
-            CXX_STANDARD 20
-            CXX_STANDARD_REQUIRED ON)
-    endif()
+        set(ENABLE_JIT OFF CACHE BOOL "" FORCE)
+        set(ENABLE_GDBSTUB OFF CACHE BOOL "" FORCE)
+        set(ENABLE_OGLRENDERER OFF CACHE BOOL "" FORCE)
+        set(BUILD_QT_SDL OFF CACHE BOOL "" FORCE)
+        set(DIRENT_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/host/third_party/dirent" CACHE PATH "" FORCE)
+        add_subdirectory(melonDS-master EXCLUDE_FROM_ALL)
+        if(TARGET core)
+            set_target_properties(core PROPERTIES
+                CXX_STANDARD 20
+                CXX_STANDARD_REQUIRED ON)
+        endif()
         set(EMUGBDS_BUILD_WITH_MELONDS ON)
     endif()
 endif()
+
+# Keep core implementation units in one place so the application and tests
+# cannot silently drift apart as the in-house GBA core is modularized.
+set(EMUGBDS_INHOUSE_GBA_SOURCES
+    host/src/ingba/Core.cpp
+    host/src/ingba/MemoryBus.cpp
+    host/src/ingba/ArmExecute.cpp
+    host/src/ingba/ThumbExecute.cpp
+    host/src/ingba/Swi.cpp
+    host/src/ingba/CpuState.cpp
+    host/src/ingba/Video.cpp
+)
 
 add_executable(emugbds
     host/src/main.cpp
@@ -67,7 +79,7 @@ add_executable(emugbds
     host/src/runtime/RuntimeKernel.cpp
     host/src/boot/BootPolicy.cpp
     host/src/scheduler/FrameScheduler.cpp
-    host/src/ingba/Core.cpp
+    ${EMUGBDS_INHOUSE_GBA_SOURCES}
     host/src/inds/Core.cpp
     host/src/gba/GbaCartridgeHeader.cpp
     host/src/nds/NdsCartridgeHeader.cpp
@@ -115,7 +127,7 @@ if(BUILD_TESTING)
         host/src/cores/InHouseDsCoreAdapter.cpp
         host/src/cores/InHouseGbaCoreAdapter.cpp
         host/src/inds/Core.cpp
-        host/src/ingba/Core.cpp
+        ${EMUGBDS_INHOUSE_GBA_SOURCES}
         host/src/gba/GbaCartridgeHeader.cpp
         host/src/nds/NdsCartridgeHeader.cpp
     )

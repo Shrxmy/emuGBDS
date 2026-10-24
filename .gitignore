@@ -1,57 +1,61 @@
-# Prerequisites
+# Build products and compiler artifacts
+*.a
 *.d
-
-# Compiled Object files
-*.slo
-*.lo
+*.app
+*.dll
+*.dylib
+*.exe
+*.exp
+*.gch
+*.ilk
+*.lib
+*.log
 *.o
 *.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
 *.out
-*.app
+*.pch
+*.pdb
+*.so
 
-# CMake / generated build trees
+# CMake and generated build trees
 /build/
 /build-*/
-/mgba-master/
-/melonDS-master/
+CMakeCache.txt
+CMakeFiles/
+CTestTestfile.cmake
+CPackConfig.cmake
+CPackSourceConfig.cmake
+compile_commands.json
+cmake_install.cmake
+install_manifest.txt
+Testing/
+CMakeUserPresets.json
+.ninja_deps
+.ninja_log
+
+# Local development assets and clean-room reference trees
+/basis/
 /bios/
 /roms/
-/CMakeFiles/
-/CMakeCache.txt
-/cmake_install.cmake
-/CPackConfig.cmake
-/CPackSourceConfig.cmake
-/compile_commands.json
-/CTestTestfile.cmake
-/Testing/
 
-# Visual Studio / IDE metadata
+# IDE and editor metadata
 /.vs/
+/.vscode/
 *.VC.db
 *.VC.opendb
-*.suo
-*.user
 *.recipe
+*.suo
 *.tlog
+*.user
+*.code-workspace
+
+# Coverage output
+coverage/
+*.gcda
+*.gcno
+*.gcov
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini

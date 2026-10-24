@@ -26,7 +26,8 @@ public:
     bool LoadRom(const std::filesystem::path& rom_path, std::string& error);
     bool RunFrame(std::string& error);
     bool Reset(std::string& error);
-    bool IsRunning() const noexcept { return initialized_ && rom_loaded_ && !halted_; }
+    // HALT stops the CPU, not the emulation core; timing and video continue.
+    bool IsRunning() const noexcept { return initialized_ && rom_loaded_; }
     void ApplyInputMasks(uint32_t press_mask, uint32_t release_mask) noexcept;
     uint16_t keyinput_state() const noexcept { return bus_.keyinput_state(); }
     const uint32_t* video_pixels() const noexcept { return video_buffer_.data(); }
@@ -47,8 +48,6 @@ public:
     uint64_t unknown_arm_instruction_count() const noexcept { return unknown_arm_instruction_count_; }
     const UnsupportedArmStats& unsupported_arm_stats() const noexcept { return unsupported_arm_stats_; }
     uint8_t last_unsupported_swi() const noexcept { return last_unsupported_swi_; }
-    uint32_t last_unsupported_pc() const noexcept { return last_unsupported_pc_; }
-    uint32_t last_unsupported_instruction() const noexcept { return last_unsupported_instruction_; }
 
 private:
     enum class UnsupportedArmClass {
@@ -89,8 +88,11 @@ private:
     uint32_t DecodeShiftedRegister(uint32_t instruction, uint32_t fetch_pc, bool& shifter_carry) const;
     uint32_t ReadArmRegister(uint32_t reg_index, uint32_t fetch_pc) const;
     void WriteArmRegister(uint32_t reg_index, uint32_t value);
+    uint32_t ReadArmUserRegister(uint32_t reg_index, uint32_t fetch_pc) const;
+    void WriteArmUserRegister(uint32_t reg_index, uint32_t value);
     uint32_t ReadThumbRegister(uint32_t reg_index, uint32_t fetch_pc) const;
     void WriteThumbRegister(uint32_t reg_index, uint32_t value);
+    void SetThumbState(bool enabled) noexcept;
     void SetNFlag(bool value);
     void SetZFlag(bool value);
     void SetCFlag(bool value);
@@ -121,13 +123,28 @@ private:
         bool mask_irq) noexcept;
     void ServicePendingInterrupts() noexcept;
     void AdvanceLcdTiming(uint32_t elapsed_cycles) noexcept;
+    void CaptureVideoScanlineState(uint16_t scanline) noexcept;
     void UpdateVideoFrame();
 
     static constexpr uint32_t kVideoWidth = 240u;
     static constexpr uint32_t kVideoHeight = 160u;
     static constexpr size_t kVideoPixelCount = static_cast<size_t>(kVideoWidth) * static_cast<size_t>(kVideoHeight);
 
+    struct VideoScanlineState {
+        uint16_t dispcnt = 0;
+        std::array<uint16_t, 4u> bgcnt{};
+        std::array<uint16_t, 4u> hofs{};
+        std::array<uint16_t, 4u> vofs{};
+        std::array<int16_t, 4u> affine_pa{};
+        std::array<int16_t, 4u> affine_pb{};
+        std::array<int16_t, 4u> affine_pc{};
+        std::array<int16_t, 4u> affine_pd{};
+        std::array<int32_t, 4u> reference_x{};
+        std::array<int32_t, 4u> reference_y{};
+    };
+
     std::array<uint32_t, kVideoPixelCount> video_buffer_{};
+    std::array<VideoScanlineState, kVideoHeight> video_scanline_states_{};
     MemoryBus bus_{};
     CpuState cpu_{};
     bool initialized_ = false;
@@ -136,14 +153,13 @@ private:
     bool halted_ = false;
     bool in_vblank_ = false;
     bool in_hblank_ = false;
+    bool in_vcounter_match_ = false;
     uint32_t thumb_bl_prefix_base_ = 0;
     uint32_t lcd_cycle_in_frame_ = 0;
     uint64_t frame_counter_ = 0;
     uint64_t unknown_arm_instruction_count_ = 0;
     UnsupportedArmStats unsupported_arm_stats_{};
     uint8_t last_unsupported_swi_ = 0;
-    uint32_t last_unsupported_pc_ = 0;
-    uint32_t last_unsupported_instruction_ = 0;
 };
 
 } // namespace emugbds::ingba

@@ -2,9 +2,10 @@
 
 If you are new to this codebase, read in this order:
 
-1. `docs/CODEBASE_TOUR.md`
-2. `docs/WORKFLOW.md`
-3. `docs/ROADMAP.md`
+1. `docs/ARCHITECTURE.md`
+2. `docs/CODEBASE_TOUR.md`
+3. `docs/WORKFLOW.md`
+4. `docs/ROADMAP.md`
 
 ## Quick Start
 

@@ -9,6 +9,11 @@ struct CpuState {
     std::array<uint32_t, 16> r{};
     uint32_t cpsr = 0x0000001Fu;
     bool thumb = false;
+    // R8-R12 are shared by User/System and the exception modes, but FIQ has
+    // its own copies of them.
+    std::array<uint32_t, 5> shared_r8_r12{};
+    // User and System modes share the same banked SP/LR pair.
+    std::array<uint32_t, 2> banked_r13_r14_usr{};
     std::array<uint32_t, 2> banked_r13_r14_irq{};
     std::array<uint32_t, 2> banked_r13_r14_svc{};
     std::array<uint32_t, 2> banked_r13_r14_abt{};

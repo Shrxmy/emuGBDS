@@ -38,17 +38,39 @@ Think of this as the host "OS" for emulator cores.
 - Adapter:
   - `host/include/emugbds/cores/InHouseGbaCoreAdapter.h`
   - `host/src/cores/InHouseGbaCoreAdapter.cpp`
-- Core:
+- Core API and orchestration:
   - `host/include/emugbds/ingba/Core.h`
   - `host/src/ingba/Core.cpp`
+- CPU state and bank switching:
+  - `host/include/emugbds/ingba/CpuState.h`
+  - `host/src/ingba/CpuState.cpp`
+- Memory bus, MMIO, timers, DMA, and Flash:
   - `host/include/emugbds/ingba/MemoryBus.h`
+  - `host/src/ingba/MemoryBus.cpp`
+- Instruction execution:
+  - `host/src/ingba/ArmExecute.cpp`
+  - `host/src/ingba/ThumbExecute.cpp`
+  - `host/src/ingba/Swi.cpp`
+- Video composition:
+  - `host/src/ingba/Video.cpp`
+  - `host/include/emugbds/ingba/VideoConstants.h`
+- Internal constants and diagnostics:
+  - `host/include/emugbds/ingba/MemoryConstants.h`
+  - `host/include/emugbds/ingba/CpuConstants.h`
+  - `host/include/emugbds/ingba/DebugTrace.h`
 
 ### Where to edit for GBA features
 
-- CPU decode/execute (ARM/Thumb/SWI): `host/src/ingba/Core.cpp`
-- Memory and IO behavior (RAM/VRAM/IO/DMA): `host/src/ingba/Core.cpp` (MemoryBus section)
-- Video output generation: `UpdateVideoFrame` path in `host/src/ingba/Core.cpp`
-- Input key state plumbing: adapter + `ApplyInputMasks` in core
+- CPU lifecycle, frame stepping, and dispatch: `host/src/ingba/Core.cpp`
+- ARM/Thumb instruction behavior: the corresponding execution unit above
+- CPU modes, banked registers, and exception state: `CpuState.cpp`
+- RAM/VRAM/IO/DMA/save behavior: `MemoryBus.cpp`
+- Backgrounds, sprites, windows, blending, and pixels: `Video.cpp`
+- Input key state plumbing: adapter + `Core::ApplyInputMasks`
+
+The implementation units are shared by the application and test targets through
+`EMUGBDS_INHOUSE_GBA_SOURCES` in the root `CMakeLists.txt`; keep that list as
+the single source-of-truth when adding a new GBA module.
 
 ## 5) DS Path (In-House Core)
 

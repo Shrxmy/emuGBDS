@@ -74,9 +74,12 @@ Check:
 
 Then inspect:
 
-- CPU instruction path in `host/src/ingba/Core.cpp`
-- SWI path in `ExecuteSoftwareInterrupt` / `HandleSoftwareInterrupt`
-- DMA and IO path in MemoryBus section of `host/src/ingba/Core.cpp`
+- CPU lifecycle and dispatch in `host/src/ingba/Core.cpp`
+- ARM/Thumb execution in `host/src/ingba/ArmExecute.cpp` and `ThumbExecute.cpp`
+- SWI behavior in `host/src/ingba/Swi.cpp`
+- CPU state and exception banking in `host/src/ingba/CpuState.cpp`
+- DMA and IO in `host/src/ingba/MemoryBus.cpp`
+- Video state and composition in `host/src/ingba/Video.cpp`
 
 ## Input Mapping (Interactive)
 
