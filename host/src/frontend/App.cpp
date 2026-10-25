@@ -35,6 +35,7 @@ constexpr auto kFrameTarget = std::chrono::duration<double>(1.0 / 59.7275);
 // About 60 ms of queued stereo int16 audio: enough to ride out frame jitter.
 constexpr uint32_t kAudioQueueTargetBytes = 2048u * 2u * sizeof(int16_t);
 constexpr double kStatusSeconds = 4.0;
+constexpr const char* kTitle = "emuGBDS " EMUGBDS_VERSION;
 
 struct MemoryRegion {
     const char* name;
@@ -204,6 +205,7 @@ private:
     std::array<std::array<char, 1024>, 4> path_edit_{};
     int save_chip_choice_ = 4;
     bool confirm_save_chip_ = false;
+    bool about_popup_ = false;
     std::filesystem::path confirm_save_path_; // the file the open "Replace save?" dialog is about
     std::array<uint8_t, 3> hidden_layers_{}; // GBA, DS engine A, DS engine B
 
@@ -272,7 +274,7 @@ bool App::InitSdl(std::string& error) {
         error = std::string("SDL_Init failed: ") + SDL_GetError();
         return false;
     }
-    window_ = SDL_CreateWindow("emuGBDS", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 240 * 3,
+    window_ = SDL_CreateWindow(kTitle, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 240 * 3,
         160 * 3 + menu_height_, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
     if (!window_) {
         error = std::string("SDL_CreateWindow failed: ") + SDL_GetError();
@@ -449,13 +451,13 @@ void App::Boot(const runtime::BootConfig& config) {
     std::string error;
     session_ = Session::Start(config, error);
     if (!session_) {
-        SDL_SetWindowTitle(window_, "emuGBDS");
+        SDL_SetWindowTitle(window_, kTitle);
         ShowError("Could not start the game: " + error);
         return;
     }
     paused_ = false;
     const std::string name = GameName();
-    SDL_SetWindowTitle(window_, ("emuGBDS - " + name).c_str());
+    SDL_SetWindowTitle(window_, (std::string(kTitle) + " - " + name).c_str());
     for (const auto* rom : {&config.nds_rom_path, &config.gba_rom_path, &config.slot2_rom_path}) {
         if (rom->has_value()) {
             std::error_code absolute_error;
@@ -482,7 +484,7 @@ void App::ResetGame() {
 void App::CloseGame() {
     session_.reset();
     have_frame_ = false;
-    SDL_SetWindowTitle(window_, "emuGBDS");
+    SDL_SetWindowTitle(window_, kTitle);
 }
 
 
@@ -1078,6 +1080,13 @@ void App::DrawMenuBar() {
         ImGui::EndMenu();
     }
 
+    if (ImGui::BeginMenu("Help")) {
+        if (ImGui::MenuItem("About emuGBDS")) {
+            about_popup_ = true;
+        }
+        ImGui::EndMenu();
+    }
+
     // Right side: the latest message, else speed and state.
     std::string right;
     if (!status_.empty() && std::chrono::duration<double>(Clock::now() - status_time_).count() < kStatusSeconds) {
@@ -1288,6 +1297,23 @@ void App::DrawDebugWindow() {
 
 
 void App::DrawPopups() {
+    if (about_popup_) {
+        ImGui::OpenPopup("About emuGBDS");
+        about_popup_ = false;
+    }
+    if (ImGui::BeginPopupModal("About emuGBDS", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        SDL_version sdl{};
+        SDL_GetVersion(&sdl);
+        ImGui::Text("%s", kTitle);
+        ImGui::TextUnformatted("Clean-room Game Boy Advance and Nintendo DS emulator.");
+        ImGui::Separator();
+        ImGui::TextDisabled("SDL %u.%u.%u, Dear ImGui %s", sdl.major, sdl.minor, sdl.patch, IMGUI_VERSION);
+        if (ImGui::Button("OK", ImVec2(120.0f, 0.0f))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
     if (error_popup_) {
         ImGui::OpenPopup("Error");
         error_popup_ = false;

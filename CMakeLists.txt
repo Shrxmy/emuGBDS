@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(emuGBDS LANGUAGES C CXX)
+# The one place the version lives: shown by --version, the window title, and Help > About.
+project(emuGBDS VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -125,6 +126,7 @@ if(EMUGBDS_BUILD_WITH_MELONDS)
 endif()
 
 target_include_directories(emugbds PRIVATE host/include)
+target_compile_definitions(emugbds PRIVATE EMUGBDS_VERSION="${PROJECT_VERSION}")
 
 if(EMUGBDS_BUILD_WITH_MELONDS)
     target_compile_definitions(emugbds PRIVATE EMUGBDS_HAS_MELONDS=1)
@@ -191,6 +193,9 @@ if(BUILD_TESTING)
     set(EMUGBDS_TEST_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/test-fixtures")
     add_test(NAME cli_fixture_setup COMMAND emugbds_tests --emit-fixtures "${EMUGBDS_TEST_FIXTURE_DIR}")
     set_tests_properties(cli_fixture_setup PROPERTIES FIXTURES_SETUP EMUGBDS_CLI_FIXTURES)
+
+    add_test(NAME cli_version COMMAND emugbds --version)
+    set_tests_properties(cli_version PROPERTIES PASS_REGULAR_EXPRESSION "^emuGBDS ${PROJECT_VERSION}")
 
     add_test(
         NAME cli_gba_smoke

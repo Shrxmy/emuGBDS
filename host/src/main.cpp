@@ -36,9 +36,9 @@ struct CliOptions {
 
 void PrintUsage() {
     std::cout
-        << "emuGBDS - unified DS/GBA host prototype\n"
+        << "emuGBDS " EMUGBDS_VERSION " - unified DS/GBA host prototype\n"
         << "Usage:\n"
-        << "  emugbds [--mode auto|ds|gba] [--gba-core auto|internal] [--nds <rom.nds>] [--gba <rom.gba>] [--slot2 <rom.gba>] [--bios-gba <bios.bin>] [--no-bios-gba] [--bios-nds7 <biosnds7.bin>] [--bios-nds9 <biosnds9.bin>] [--firmware-nds <firmware.bin>] [--boot-mode auto|ds-firmware|direct] [--trace-transition] [--frames N] [--interactive] [--uncapped] [--debug-stats] [rom.gba|rom.nds]\n"
+        << "  emugbds [--mode auto|ds|gba] [--gba-core auto|internal] [--nds <rom.nds>] [--gba <rom.gba>] [--slot2 <rom.gba>] [--bios-gba <bios.bin>] [--no-bios-gba] [--bios-nds7 <biosnds7.bin>] [--bios-nds9 <biosnds9.bin>] [--firmware-nds <firmware.bin>] [--boot-mode auto|ds-firmware|direct] [--trace-transition] [--frames N] [--interactive] [--uncapped] [--debug-stats] [--version] [rom.gba|rom.nds]\n"
         << "Without --frames the window opens (with --frames N it runs N frames headless, unless --interactive).\n";
 }
 
@@ -92,6 +92,10 @@ bool ParseArgs(int argc, char** argv, CliOptions& options, std::string& error) {
         const std::string arg = argv[i];
         if (arg == "--help" || arg == "-h") {
             PrintUsage();
+            return false;
+        }
+        if (arg == "--version") {
+            std::cout << "emuGBDS " EMUGBDS_VERSION "\n";
             return false;
         }
         if (arg == "--mode") {

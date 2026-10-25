@@ -2,6 +2,8 @@
 
 Clean-room emulator host focused on in-house core development.
 
+Version 0.1.0 (`emugbds --version`; set in `CMakeLists.txt` `project()`).
+
 Current state:
 - In-house GBA core scaffold (`ingba`) with incremental ARM execution support.
 - In-house DS core (`inds`) in bring-up: both CPUs, 2D video, input, cartridge and save chip, sound, and the real BIOS/firmware handoff to GBA; no 3D yet.
