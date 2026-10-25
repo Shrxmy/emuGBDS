@@ -35,6 +35,7 @@ struct BootConfig {
     std::optional<std::filesystem::path> nds_bios9_path;
     std::optional<std::filesystem::path> nds_firmware_path;
     core::DsBootMode ds_boot_mode = core::DsBootMode::Auto;
+    bool ds_menu = false; // see core::BootRequest::ds_menu
     bool trace_transition = false;
 };
 

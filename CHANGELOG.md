@@ -7,6 +7,12 @@
   cycle each. DS boot and menu transitions stutter far less.
 - DS: a GBA cartridge can sit in Slot-2 (File > Slot-2 cartridge) and keeps its save;
   firmware settings are saved to `<firmware>.sav`.
+- DS menu with both slots: File > Slot-1 card and Slot-2 cartridge pick the cartridges, and
+  File > Start DS menu boots the real DS menu, which can start either one (the NDS card goes
+  through the cartridge's KEY1 encryption stage, as on hardware). Also `--ds-menu` on the
+  command line. An empty Slot-2 now reads as empty instead of as a DS Option Pak.
+- Faster: DS 2D rendering, the CPUs' memory access, and (on hybrid CPUs) the emulator stays on
+  the performance cores; busy DS menu transitions no longer stall.
 - Lower memory use: exact-size ROM loads, and each core is allocated only when used.
 
 ## 0.2.0

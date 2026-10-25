@@ -47,6 +47,7 @@ private:
     std::optional<std::filesystem::path> nds_firmware_path_;
     std::optional<std::filesystem::path> slot2_rom_path_;
     core::DsBootMode ds_boot_mode_ = core::DsBootMode::Auto;
+    bool ds_menu_ = false;
     bool trace_transition_ = false;
     uint32_t held_keys_ = 0;
 };

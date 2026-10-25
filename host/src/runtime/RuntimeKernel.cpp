@@ -259,6 +259,7 @@ core::BootRequest RuntimeKernel::BuildCoreRequest(const BootConfig& config) cons
     request.nds_bios9_path = config.nds_bios9_path;
     request.nds_firmware_path = config.nds_firmware_path;
     request.ds_boot_mode = config.ds_boot_mode;
+    request.ds_menu = config.ds_menu;
     request.trace_transition = config.trace_transition;
     return request;
 }

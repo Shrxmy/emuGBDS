@@ -6,6 +6,8 @@
 #include "emugbds/input/GbaKeys.h"
 #include "emugbds/inds/Backup.h"
 #include "emugbds/inds/Core.h"
+#include "emugbds/inds/GameCard.h"
+#include "emugbds/inds/Key1.h"
 #include "emugbds/inds/MemoryBus.h"
 #include "emugbds/ingba/Core.h"
 #include "emugbds/ingba/MemoryBus.h"
@@ -2805,6 +2807,7 @@ void TestIndsCartridgeReads(TestContext& t) {
     t.Expect(bus.LoadNdsRom(dir / "cart.nds", error), "cartridge image loads");
     auto& arm9 = bus.arm9();
     arm9.Write16(0x040001A0u, 0x8000u); // slot enabled, ROM mode
+    bus.io().card().EnterMainDataMode(); // as after the BIOS card boot (or direct boot)
     auto command = [&](uint32_t low, uint32_t high, uint32_t block) {
         arm9.Write32(0x040001A8u, low);
         arm9.Write32(0x040001ACu, high);
@@ -2828,6 +2831,82 @@ void TestIndsCartridgeReads(TestContext& t) {
     command(0x000002B7u, 0x00u, 7u); // B7h 02000000h: past the image, mirrors to 0 -> 8000h
     t.Expect(arm9.Read32(0x04100010u) == (image[0x8000u] | (image[0x8001u] << 8u) | (image[0x8002u] << 16u) | (image[0x8003u] << 24u)),
         "addresses past the ROM mirror (then redirect)");
+}
+
+// The card's KEY1 stage, driven the way the BIOS does it (GBATEK "DS Cartridge Protocol"), with a
+// made-up key table in place of the ARM7 BIOS one.
+void TestIndsCardKey1Boot(TestContext& t) {
+    using emugbds::inds::GameCard;
+    using emugbds::inds::Key1;
+    std::vector<uint8_t> bios7(0x4000u);
+    uint32_t seed = 12345u;
+    for (uint8_t& byte : bios7) {
+        seed = seed * 1103515245u + 12345u;
+        byte = static_cast<uint8_t>(seed >> 16u);
+    }
+    std::vector<uint8_t> rom(0x10000u);
+    for (size_t i = 0u; i < rom.size(); ++i) {
+        rom[i] = static_cast<uint8_t>(i * 7u + (i >> 9u));
+    }
+    std::memcpy(&rom[0x0Cu], "TEST", 4u);
+    const uint8_t checked_id[8] = {0xFFu, 0xDEu, 0xFFu, 0xE7u, 0xFFu, 0xDEu, 0xFFu, 0xE7u};
+    std::memcpy(&rom[0x4000u], checked_id, 8u); // a decrypted dump, ID already checked
+    const uint32_t gamecode = rom[0x0Cu] | (rom[0x0Du] << 8u) | (rom[0x0Eu] << 16u) | (static_cast<uint32_t>(rom[0x0Fu]) << 24u);
+
+    GameCard card;
+    card.AttachRom(&rom);
+    card.AttachKeyTable(&bios7);
+    card.Reset();
+    card.WriteWord(0x00u, 0x8000u, 0xFFFFu); // slot enabled, ROM mode
+    const auto send = [&](uint64_t command, uint32_t block) {
+        uint32_t words[2] = {}; // register byte 0 is the command's most significant byte
+        for (uint32_t i = 0u; i < 8u; ++i) {
+            words[i / 4u] |= static_cast<uint32_t>((command >> ((7u - i) * 8u)) & 0xFFu) << ((i % 4u) * 8u);
+        }
+        card.WriteWord(0x08u, words[0], 0xFFFFFFFFu);
+        card.WriteWord(0x0Cu, words[1], 0xFFFFFFFFu);
+        card.WriteWord(0x04u, 0xA0000000u | (block << 24u), 0xFFFFFFFFu);
+    };
+    Key1 commands{};
+    Key1 level3{};
+    t.Expect(commands.Init(bios7, gamecode, 2, 8u) && level3.Init(bios7, gamecode, 3, 8u), "KEY1 initialises from the key table");
+    const auto encrypted = [&](uint64_t plain) {
+        uint32_t lo = static_cast<uint32_t>(plain);
+        uint32_t hi = static_cast<uint32_t>(plain >> 32u);
+        commands.Encrypt(lo, hi);
+        return (static_cast<uint64_t>(hi) << 32u) | lo;
+    };
+
+    send(0x9000000000000000ull, 7u);
+    const uint32_t chip_id = card.ReadData();
+    send(0x3C00000000000000ull, 0u); // activate KEY1
+    send(encrypted(0x1000012345600001ull), 7u);
+    t.Expect(card.ReadData() == chip_id, "the KEY1 chip ID command returns the chip ID");
+
+    std::vector<uint8_t> block(0x1000u);
+    send(encrypted(0x2000412345600002ull), 4u); // secure area block 4 (4000h), 1000h bytes
+    for (uint32_t i = 0u; i < 0x1000u; i += 4u) {
+        const uint32_t word = card.ReadData();
+        std::memcpy(&block[i], &word, 4u);
+    }
+    // The BIOS's decryption: level 2 on the first 8 bytes, then level 3 over the first 2 KiB.
+    for (uint32_t offset = 0u; offset < 0x800u; offset += 8u) {
+        uint32_t words[2] = {};
+        std::memcpy(words, &block[offset], 8u);
+        if (offset == 0u) {
+            commands.Decrypt(words[0], words[1]);
+        }
+        level3.Decrypt(words[0], words[1]);
+        std::memcpy(&block[offset], words, 8u);
+    }
+    t.Expect(std::memcmp(block.data(), "encryObj", 8u) == 0, "the secure area decrypts to the encryObj ID");
+    t.Expect(std::equal(block.begin() + 8, block.end(), rom.begin() + 0x4008),
+        "the rest of the secure area decrypts to the ROM's bytes");
+
+    send(encrypted(0xA000012345600003ull), 0u); // enter main data mode
+    send(0xB700008000000000ull, 7u);          // B7h 00008000h
+    t.Expect(card.ReadData() == (rom[0x8000u] | (rom[0x8001u] << 8u) | (rom[0x8002u] << 16u) | (static_cast<uint32_t>(rom[0x8003u]) << 24u)),
+        "main data mode reads the ROM");
 }
 
 void TestIndsBackupMemory(TestContext& t) {
@@ -3319,6 +3398,14 @@ void TestIndsDirectBootRunsBothCpus(TestContext& t) {
     t.Expect(core.arm9().r[3] == 0x41059461u, "inds ARM9 reads CP15 through MRC");
     t.Expect(core.arm9().r[4] == 0x4442474Eu, "inds direct boot copies the header to 027FFE00h");
     t.Expect(core.arm7().r[0] == 0x22u, "inds ARM7 runs its own binary");
+
+    emugbds::inds::Core menu;
+    menu.set_menu_boot(true);
+    std::string menu_error;
+    const bool menu_booted =
+        menu.Configure(std::nullopt, std::nullopt, std::nullopt, emugbds::core::DsBootMode::DsFirmware, false, menu_error) &&
+        menu.Initialize(menu_error) && menu.LoadPrimaryRom(nds, menu_error);
+    t.Expect(!menu_booted && !menu_error.empty(), "the DS menu without BIOS or firmware is an error, not a direct boot");
     t.Expect(core.arm9().r[2] == 0x22u, "inds ARM9 sees the ARM7's main RAM write");
     t.Expect(core.arm9_cpu().unknown_arm_instruction_count() == 0u && core.arm7_cpu().unknown_arm_instruction_count() == 0u,
         "inds dual-CPU programs use only supported instructions");
@@ -3726,7 +3813,7 @@ int RunUnitTests() {
         void (*fn)(TestContext&);
     };
 
-    const std::array<NamedTest, 70> tests = {{
+    const std::array<NamedTest, 71> tests = {{
         {"frontend_settings", &TestFrontendSettings},
         {"arm_v5_clz_and_saturation", &TestArmV5ClzAndSaturation},
         {"arm_v5_halfword_multiplies", &TestArmV5HalfwordMultiplies},
@@ -3781,6 +3868,7 @@ int RunUnitTests() {
         {"inds_spi_devices", &TestIndsSpiDevices},
         {"inds_vram_banking", &TestIndsVramBanking},
         {"inds_cartridge_reads", &TestIndsCartridgeReads},
+        {"inds_card_key1_boot", &TestIndsCardKey1Boot},
         {"inds_backup_memory", &TestIndsBackupMemory},
         {"inds_geometry_and_wifi_stubs", &TestIndsGeometryAndWifiStubs},
         {"inds_sound", &TestIndsSound},

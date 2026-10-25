@@ -421,8 +421,15 @@ bool Core::Reset(std::string& error) {
     pending_transition_.reset();
     firmware_menu_frame_counter_ = 0;
 
-    if (nds_header_.has_value() && nds_rom_loaded_) {
-        // Any loaded cartridge is direct-booted: the firmware menu is not emulated.
+    const bool can_run_firmware = boot_mode_ == core::DsBootMode::DsFirmware && bus_.HasBios9() && bus_.HasBios7() &&
+        bus_.HasFirmware();
+    if (menu_boot_ && !can_run_firmware) {
+        error = "The DS menu needs both DS BIOS files and the DS firmware";
+        running_ = false;
+        return false;
+    }
+    if (nds_header_.has_value() && nds_rom_loaded_ && !(menu_boot_ && can_run_firmware)) {
+        // A loaded cartridge is direct-booted unless the DS menu was asked for.
         if (!DirectBoot(error)) {
             running_ = false;
             return false;
@@ -432,9 +439,8 @@ bool Core::Reset(std::string& error) {
         arm9_.state().r[15] = bus_.HasBios9() ? MemoryBus::kArm9BiosBase : MemoryBus::kMainRamBase;
         arm7_.state().r[15] = bus_.HasBios7() ? 0u : MemoryBus::kMainRamBase;
         // Firmware boot: both CPUs start at their reset vectors and run the real BIOS and firmware,
-        // whose menu starts a Slot-2 game by writing HALTCNT GBA mode.
-        firmware_running_ = boot_mode_ == core::DsBootMode::DsFirmware && bus_.HasBios9() && bus_.HasBios7() &&
-            bus_.HasFirmware();
+        // which boot a Slot-1 card themselves, or start a Slot-2 game by writing HALTCNT GBA mode.
+        firmware_running_ = can_run_firmware;
         cpus_active_ = firmware_running_;
     }
 
@@ -443,6 +449,7 @@ bool Core::Reset(std::string& error) {
 }
 
 bool Core::DirectBoot(std::string& error) {
+    bus_.io().card().EnterMainDataMode(); // where the BIOS card boot would have left it
     const std::vector<uint8_t>& rom = bus_.nds_rom();
     const nds::NdsCartridgeHeaderInfo& header = *nds_header_;
     const auto copy = [&](arm::IBus& bus, uint32_t rom_offset, uint32_t ram_address, uint32_t size, const char* what) {

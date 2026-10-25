@@ -1,5 +1,8 @@
 #include "emugbds/inds/GameCard.h"
 
+#include <algorithm>
+#include <cstring>
+
 namespace emugbds::inds {
 namespace {
 
@@ -21,10 +24,12 @@ constexpr uint32_t kEmptySlotData = 0xFFFFFFFFu;
 
 void GameCard::Reset() noexcept {
     const std::vector<uint8_t>* rom = rom_;
+    const std::vector<uint8_t>* bios7 = bios7_;
     Backup backup = std::move(backup_);
     backup.Deselect();
     *this = GameCard{};
     rom_ = rom;
+    bios7_ = bios7;
     backup_ = std::move(backup);
 }
 
@@ -115,17 +120,27 @@ void GameCard::StartTransfer() noexcept {
     offset_ = 0u;
     if (rom_ == nullptr || rom_->empty()) {
         source_ = Source::HighZ;
-    } else if (command == 0xB7u) {
+    } else if (mode_ == Mode::Key1) {
+        // The register sends byte 0 first; as a KEY1 block, byte 0 is the most significant one.
+        uint64_t value = 0u;
+        for (uint32_t i = 0u; i < 8u; ++i) {
+            value = (value << 8u) | ((command_[i / 4u] >> ((i % 4u) * 8u)) & 0xFFu);
+        }
+        StartKey1Command(value);
+    } else if (mode_ == Mode::Raw && command == 0x3Cu) {
+        ActivateKey1();
+        source_ = Source::HighZ;
+    } else if (mode_ == Mode::Main && command == 0xB7u) {
         source_ = Source::Rom;
         mirror_size_ = 0x8000u;
         while (mirror_size_ < rom_->size() && mirror_size_ < 0x80000000u) {
             mirror_size_ <<= 1u;
         }
-    } else if (command == 0x90u || command == 0xB8u) {
+    } else if ((mode_ == Mode::Raw && command == 0x90u) || (mode_ == Mode::Main && command == 0xB8u)) {
         source_ = Source::ChipId;
-    } else if (command == 0x00u) {
+    } else if (mode_ == Mode::Raw && command == 0x00u) {
         source_ = Source::Header;
-    } else if (command == 0x9Fu) {
+    } else if (mode_ == Mode::Raw && command == 0x9Fu) {
         source_ = Source::HighZ;
     } else {
         source_ = Source::Zero; // Invalid commands in data mode return 00h bytes.
@@ -134,6 +149,73 @@ void GameCard::StartTransfer() noexcept {
         FinishTransfer();
     } else {
         romctrl_ |= kDataReady;
+    }
+}
+
+
+void GameCard::ActivateKey1() noexcept {
+    mode_ = Mode::Key1;
+    last_secure_command_ = 0u;
+    secure_offset_ = 0u;
+    const uint32_t gamecode = RomByte(0x0Cu) | (RomByte(0x0Du) << 8u) | (RomByte(0x0Eu) << 16u) |
+        (static_cast<uint32_t>(RomByte(0x0Fu)) << 24u);
+    Key1 secure_key{};
+    key1_ready_ = bios7_ != nullptr && key1_.Init(*bios7_, gamecode, 2, 8u) && secure_key.Init(*bios7_, gamecode, 3, 8u);
+
+    secure_area_.resize(0x4000u);
+    for (uint32_t i = 0u; i < 0x4000u; ++i) {
+        secure_area_[i] = RomByte(0x4000u + i);
+    }
+    // A decrypted ROM image holds the ID "encryObj", or E7FFDEFFh twice once the BIOS has checked it;
+    // a cartridge stores the first 2 KiB encrypted, which the BIOS undoes as level 2 on the first
+    // 8 bytes and then level 3 on all 2 KiB. Other images are taken as already encrypted.
+    static constexpr uint8_t kId[8] = {'e', 'n', 'c', 'r', 'y', 'O', 'b', 'j'};
+    static constexpr uint8_t kCheckedId[8] = {0xFFu, 0xDEu, 0xFFu, 0xE7u, 0xFFu, 0xDEu, 0xFFu, 0xE7u};
+    const bool decrypted = std::equal(kId, kId + 8, secure_area_.begin()) ||
+        std::equal(kCheckedId, kCheckedId + 8, secure_area_.begin());
+    if (!key1_ready_ || !decrypted) {
+        return;
+    }
+    std::copy(kId, kId + 8, secure_area_.begin());
+    const auto block = [this](uint32_t offset, const Key1& key) {
+        uint32_t words[2] = {};
+        std::memcpy(words, &secure_area_[offset], 8u);
+        key.Encrypt(words[0], words[1]);
+        std::memcpy(&secure_area_[offset], words, 8u);
+    };
+    for (uint32_t offset = 0u; offset < 0x800u; offset += 8u) {
+        block(offset, secure_key);
+    }
+    block(0u, key1_);
+}
+
+
+void GameCard::StartKey1Command(uint64_t command) noexcept {
+    source_ = Source::Zero; // commands 4 and 6, dummy and invalid replies
+    if (!key1_ready_) {
+        return;
+    }
+    uint32_t lo = static_cast<uint32_t>(command);
+    uint32_t hi = static_cast<uint32_t>(command >> 32u);
+    key1_.Decrypt(lo, hi);
+    const uint64_t plain = (static_cast<uint64_t>(hi) << 32u) | lo;
+    switch (plain >> 60u) {
+    case 0x1u: // 1lllliiijjjkkkkk: 2nd chip ID
+        source_ = Source::ChipId;
+        break;
+    case 0x2u: // 2bbbbiiijjjkkkkk: secure area block bbbb (4-7)
+        source_ = Source::Secure;
+        address_ = static_cast<uint32_t>((plain >> 44u) & 0xFFFFu) * 0x1000u;
+        if (command != last_secure_command_) {
+            secure_offset_ = 0u;
+            last_secure_command_ = command;
+        }
+        break;
+    case 0xAu: // Alllliiijjjkkkkk: enter main data mode
+        mode_ = Mode::Main;
+        break;
+    default:
+        break;
     }
 }
 
@@ -159,6 +241,11 @@ uint32_t GameCard::NextWord() noexcept {
         case Source::Zero: byte = 0u; break;
         case Source::ChipId: byte = static_cast<uint8_t>(ChipId() >> ((offset_ & 3u) * 8u)); break;
         case Source::Header: byte = RomByte(offset_ & 0xFFFu); break; // The header repeats every 1000h bytes.
+        case Source::Secure: {
+            const uint32_t address = address_ + (secure_offset_++ & 0xFFFu);
+            byte = address >= 0x4000u && address < 0x8000u ? secure_area_[address - 0x4000u] : 0u;
+            break;
+        }
         case Source::Rom: {
             // The stream wraps within the current 4 KiB block; 0-7FFFh reads as 8000h + (addr & 1FFh).
             uint32_t address = (address_ & ~0xFFFu) | ((address_ + offset_) & 0xFFFu);

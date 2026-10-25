@@ -35,6 +35,7 @@ MemoryBus::MemoryBus()
     RefreshCpuMaps();
     RefreshDirectRegions();
     io_.card().AttachRom(&nds_rom_);
+    io_.card().AttachKeyTable(&bios7_);
     io_.Reset();
 }
 
@@ -305,10 +306,18 @@ uint32_t MemoryBus::Read(bool arm9, uint32_t address, uint32_t size, bool use_tc
         return value;
     }
 
+    if ((address >> 24u) == 0x08u || (address >> 24u) == 0x09u) {
+        // Slot-2 ROM with no cartridge (a cartridge is mapped above): the floating AD lines read back
+        // each halfword's address / 2 (GBATEK "DS Cart Rumble Pak"). The CPU without the slot reads 00h.
+        if (self.io_.Slot2Owner() != (arm9 ? 0 : 1)) {
+            return 0u;
+        }
+        const uint32_t halfwords = ((address >> 1u) & 0xFFFFu) | ((((address + 2u) >> 1u) & 0xFFFFu) << 16u);
+        return (halfwords >> ((address & 1u) * 8u)) & (size == 1u ? 0xFFu : size == 2u ? 0xFFFFu : 0xFFFFFFFFu);
+    }
     if ((address >> 24u) == kSlot2RamRegion) {
         // GBA slot SRAM/FLASH, an 8-bit bus repeated every 64 KiB: the byte fills every lane. The CPU
         // without the slot reads 00h; an empty slot reads FFh (GBATEK "GBA Slot").
-        // shortcut: an owned slot without a cartridge reads ROM as 00h, not the Addr/2 open-bus pattern.
         if (self.io_.Slot2Owner() != (arm9 ? 0 : 1)) {
             return 0u;
         }

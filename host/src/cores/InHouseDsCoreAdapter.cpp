@@ -35,6 +35,7 @@ bool InHouseDsCoreAdapter::Configure(const core::BootRequest& request, std::stri
     nds_bios9_path_ = request.nds_bios9_path;
     nds_firmware_path_ = request.nds_firmware_path;
     ds_boot_mode_ = request.ds_boot_mode;
+    ds_menu_ = request.ds_menu;
     trace_transition_ = request.trace_transition;
     configured_ = true;
     return true;
@@ -51,6 +52,7 @@ bool InHouseDsCoreAdapter::Initialize(std::string& error) {
 
     // Each session starts from a fresh core; allocating here keeps failures reportable.
     core_ = std::make_unique<inds::Core>();
+    core_->set_menu_boot(ds_menu_);
     if (!core_->Configure(
             nds_bios7_path_,
             nds_bios9_path_,
@@ -124,6 +126,7 @@ void InHouseDsCoreAdapter::Shutdown() noexcept {
     nds_firmware_path_.reset();
     slot2_rom_path_.reset();
     ds_boot_mode_ = core::DsBootMode::Auto;
+    ds_menu_ = false;
     trace_transition_ = false;
 }
 

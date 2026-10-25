@@ -55,6 +55,9 @@ public:
     // bottom screen in pixels; the touchscreen reports it through the firmware's calibration.
     void SetKeys(uint32_t held) noexcept { bus_.io().SetKeys(held); }
     void SetTouch(bool down, uint32_t x, uint32_t y);
+    // Boot the DS menu even with a Slot-1 card loaded (it needs the BIOS and firmware); takes effect
+    // at the next Reset or ROM load.
+    void set_menu_boot(bool enabled) noexcept { menu_boot_ = enabled; }
     // Writes the cartridge save file now if it changed (also done after writes settle).
     bool FlushSave(std::string& error);
     // Debug: layers engine 0 (A) or 1 (B) leaves out; see Engine2d::set_hidden_layers.
@@ -109,6 +112,7 @@ private:
     bool arm9_halted_ = false;
     bool arm7_halted_ = false;
     core::DsBootMode boot_mode_ = core::DsBootMode::Auto;
+    bool menu_boot_ = false;
     uint64_t frame_counter_ = 0;
     uint64_t firmware_menu_frame_counter_ = 0;
     std::array<int64_t, 2> cycle_balance_{}; // ARM9/ARM7 cycles left in (or overdrawn from) the slice

@@ -109,7 +109,7 @@ public:
     bool Run(uint64_t& executed_frames, std::string& error);
 
 private:
-    enum class Browse { Rom, GbaBios, Bios7, Bios9, Firmware, Slot2 };
+    enum class Browse { Rom, GbaBios, Bios7, Bios9, Firmware, Slot1, Slot2 };
 
     bool InitSdl(std::string& error);
     void ShutdownSdl();
@@ -124,8 +124,17 @@ private:
     void ResolvePaths(runtime::BootConfig& config) const;
     void Boot(const runtime::BootConfig& config);
     void ResetGame();
-    // Puts a GBA cartridge into (or with nullopt, takes it out of) Slot-2 of the running DS game, then restarts it.
-    void SetSlot2(const std::optional<std::filesystem::path>& gba);
+    // The cartridges in Slot-1 (NDS card) and Slot-2 (GBA cartridge): the running DS session's, or,
+    // with no DS session, the ones set aside for Start DS menu.
+    bool DsSession() const;
+    std::optional<std::filesystem::path> SlotCartridge(int slot) const;
+    // Puts a cartridge into (or with nullopt, takes it out of) a slot. A running DS session restarts
+    // with it, as the DS reads its slots at power-on; otherwise it waits for Start DS menu.
+    void SetSlot(int slot, const std::optional<std::filesystem::path>& rom);
+    // The GBA cartridge last used in Slot-2 with this DS game, if it still exists.
+    std::optional<std::filesystem::path> RememberedSlot2(const std::filesystem::path& nds) const;
+    // Boots the DS menu with whatever is in both slots.
+    void StartDsMenu();
     static std::string AbsoluteKey(const std::filesystem::path& path);
     void CloseGame();
     std::string GameName() const;
@@ -173,6 +182,7 @@ private:
     std::array<SDL_Scancode, Settings::kButtonCount> bindings_{};
     FileBrowser browser_;
     Browse browse_ = Browse::Rom;
+    std::array<std::optional<std::filesystem::path>, 2> idle_slots_{}; // Slot-1, Slot-2 with no DS session
 
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
@@ -432,13 +442,7 @@ void App::OpenRom(const std::filesystem::path& rom) {
     if (extension == ".nds") {
         config.mode_hint = core::ModeHint::DS;
         config.nds_rom_path = rom;
-        // A GBA cartridge left in Slot-2 for this DS game goes back in.
-        const auto slot2 = settings_.slot2_carts.find(AbsoluteKey(rom));
-        std::error_code slot2_error;
-        if (slot2 != settings_.slot2_carts.end() &&
-            std::filesystem::is_regular_file(std::filesystem::u8path(slot2->second), slot2_error)) {
-            config.slot2_rom_path = std::filesystem::u8path(slot2->second);
-        }
+        config.slot2_rom_path = RememberedSlot2(rom); // a GBA cartridge left in Slot-2 for this game goes back in
     } else if (settings_.gba_via_ds_firmware) {
         config.mode_hint = core::ModeHint::DS;
         config.slot2_rom_path = rom;
@@ -476,7 +480,11 @@ void App::ResolvePaths(runtime::BootConfig& config) const {
 
 
 void App::Boot(const runtime::BootConfig& config) {
-    // The old session goes first: it writes its save file before the new one reads it.
+    // The old session goes first: it writes its save file before the new one reads it. Its
+    // cartridges stay in the slots, so a boot that fails does not lose them.
+    if (DsSession()) {
+        idle_slots_ = {session_->config().nds_rom_path, session_->config().slot2_rom_path};
+    }
     session_.reset();
     have_frame_ = false;
     previous_mask_ = 0u;
@@ -524,27 +532,90 @@ std::string App::AbsoluteKey(const std::filesystem::path& path) {
 }
 
 
-void App::SetSlot2(const std::optional<std::filesystem::path>& gba) {
-    if (!session_ || !session_->config().nds_rom_path.has_value()) {
+bool App::DsSession() const {
+    return session_ && session_->config().mode_hint == core::ModeHint::DS;
+}
+
+
+std::optional<std::filesystem::path> App::SlotCartridge(int slot) const {
+    if (DsSession()) {
+        return slot == 1 ? session_->config().nds_rom_path : session_->config().slot2_rom_path;
+    }
+    return idle_slots_[slot == 1 ? 0 : 1];
+}
+
+
+std::optional<std::filesystem::path> App::RememberedSlot2(const std::filesystem::path& nds) const {
+    const auto slot2 = settings_.slot2_carts.find(AbsoluteKey(nds));
+    std::error_code error;
+    if (slot2 == settings_.slot2_carts.end() || !std::filesystem::is_regular_file(std::filesystem::u8path(slot2->second), error)) {
+        return std::nullopt;
+    }
+    return std::filesystem::u8path(slot2->second);
+}
+
+
+void App::SetSlot(int slot, const std::optional<std::filesystem::path>& rom) {
+    const std::optional<std::filesystem::path> card = slot == 1 ? rom : SlotCartridge(1);
+    const auto remember = [&] { // Slot-2 is remembered per DS game
+        if (slot != 2 || !card.has_value()) {
+            return;
+        }
+        if (rom.has_value()) {
+            settings_.slot2_carts[AbsoluteKey(*card)] = AbsoluteKey(*rom);
+        } else {
+            settings_.slot2_carts.erase(AbsoluteKey(*card));
+        }
+        SaveSettings();
+    };
+    if (!DsSession()) {
+        remember();
+        idle_slots_[slot == 1 ? 0 : 1] = rom;
+        if (slot == 1 && rom.has_value() && !idle_slots_[1].has_value()) {
+            idle_slots_[1] = RememberedSlot2(*rom);
+        }
+        ShowStatus(rom.has_value() ? "Inserted; File > Start DS menu boots with it" : "Slot emptied");
         return;
     }
     runtime::BootConfig config = session_->config();
-    const std::string key = AbsoluteKey(*config.nds_rom_path);
-    config.slot2_rom_path = gba;
-    if (gba.has_value()) {
-        settings_.slot2_carts[key] = AbsoluteKey(*gba);
-    } else {
-        settings_.slot2_carts.erase(key);
+    // A session without a card was already in the DS menu, and one left without a card goes to it.
+    if (!config.nds_rom_path.has_value() || (slot == 1 && !rom.has_value())) {
+        config.ds_menu = true;
+        config.ds_boot_mode = core::DsBootMode::DsFirmware;
+        if (!config.nds_bios7_path.has_value() || !config.nds_bios9_path.has_value() || !config.nds_firmware_path.has_value()) {
+            ShowError("The DS menu needs both DS BIOS files and the firmware (Settings > BIOS & boot)");
+            return;
+        }
     }
-    SaveSettings();
-    Boot(config); // the DS reads the slot at power-on, so the game restarts
+    (slot == 1 ? config.nds_rom_path : config.slot2_rom_path) = rom;
+    Boot(config); // the DS reads its slots at power-on, so it restarts
     if (session_) {
-        ShowStatus(gba.has_value() ? "GBA cartridge inserted; the game restarted" : "Slot-2 emptied; the game restarted");
+        remember(); // only a cartridge the DS could boot with
+        ShowStatus(rom.has_value() ? "Cartridge inserted; the DS restarted" : "Slot emptied; the DS restarted");
     }
 }
 
 
+void App::StartDsMenu() {
+    runtime::BootConfig config;
+    config.mode_hint = core::ModeHint::DS;
+    config.nds_rom_path = SlotCartridge(1);
+    config.slot2_rom_path = SlotCartridge(2);
+    config.ds_boot_mode = core::DsBootMode::DsFirmware;
+    config.ds_menu = true;
+    ResolvePaths(config);
+    if (!config.nds_bios7_path.has_value() || !config.nds_bios9_path.has_value() || !config.nds_firmware_path.has_value()) {
+        ShowError("The DS menu needs both DS BIOS files and the firmware (Settings > BIOS & boot)");
+        return;
+    }
+    Boot(config);
+}
+
+
 void App::CloseGame() {
+    if (DsSession()) { // its cartridges stay in the slots for Start DS menu
+        idle_slots_ = {session_->config().nds_rom_path, session_->config().slot2_rom_path};
+    }
     session_.reset();
     have_frame_ = false;
     SDL_SetWindowTitle(window_, kTitle);
@@ -556,6 +627,9 @@ std::string App::GameName() const {
         return {};
     }
     const runtime::BootConfig& config = session_->config();
+    if (config.ds_menu) {
+        return "DS menu";
+    }
     for (const auto* rom : {&config.nds_rom_path, &config.gba_rom_path, &config.slot2_rom_path}) {
         if (rom->has_value()) {
             return rom->value().stem().u8string();
@@ -1060,8 +1134,8 @@ void App::DrawUi() {
     if (browser_.Draw(chosen)) {
         if (browse_ == Browse::Rom) {
             OpenRom(chosen);
-        } else if (browse_ == Browse::Slot2) {
-            SetSlot2(chosen);
+        } else if (browse_ == Browse::Slot1 || browse_ == Browse::Slot2) {
+            SetSlot(browse_ == Browse::Slot1 ? 1 : 2, chosen);
         } else {
             const int index = static_cast<int>(browse_) - static_cast<int>(Browse::GbaBios);
             *PathSetting(index) = chosen.u8string();
@@ -1115,18 +1189,25 @@ void App::DrawMenuBar() {
                 OpenRom(std::filesystem::u8path(pick));
             }
         }
-        if (ImGui::BeginMenu("Slot-2 cartridge", DsSavePath().has_value())) {
-            const auto& slot2 = session_->config().slot2_rom_path;
-            ImGui::TextDisabled("%s", slot2.has_value() ? slot2->filename().u8string().c_str() : "Empty");
-            if (ImGui::MenuItem("Insert GBA cartridge...")) {
-                browse_ = Browse::Slot2;
-                browser_.Open("Insert GBA cartridge", std::filesystem::u8path(settings_.last_directory), {".gba"});
+        for (int slot = 1; slot <= 2; ++slot) {
+            if (ImGui::BeginMenu(slot == 1 ? "Slot-1 card" : "Slot-2 cartridge")) {
+                const std::optional<std::filesystem::path> cartridge = SlotCartridge(slot);
+                ImGui::TextDisabled("%s", cartridge.has_value() ? cartridge->filename().u8string().c_str() : "Empty");
+                if (ImGui::MenuItem(slot == 1 ? "Insert NDS game..." : "Insert GBA cartridge...")) {
+                    browse_ = slot == 1 ? Browse::Slot1 : Browse::Slot2;
+                    browser_.Open(slot == 1 ? "Insert NDS game" : "Insert GBA cartridge",
+                        std::filesystem::u8path(settings_.last_directory), {slot == 1 ? ".nds" : ".gba"});
+                }
+                if (ImGui::MenuItem("Eject", nullptr, false, cartridge.has_value())) {
+                    SetSlot(slot, std::nullopt);
+                }
+                ImGui::EndMenu();
             }
-            if (ImGui::MenuItem("Eject", nullptr, false, slot2.has_value())) {
-                SetSlot2(std::nullopt);
-            }
-            ImGui::EndMenu();
         }
+        if (ImGui::MenuItem("Start DS menu")) {
+            StartDsMenu();
+        }
+        ImGui::SetItemTooltip("Boots the DS menu with the cartridges in both slots");
         if (ImGui::MenuItem("Close ROM", nullptr, false, running)) {
             CloseGame();
         }

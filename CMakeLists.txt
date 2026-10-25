@@ -105,6 +105,7 @@ set(EMUGBDS_INHOUSE_DS_SOURCES
     host/src/inds/Cp15.cpp
     host/src/inds/Io.cpp
     host/src/inds/GameCard.cpp
+    host/src/inds/Key1.cpp
     host/src/inds/Backup.cpp
     host/src/inds/Wifi.cpp
     host/src/inds/Sound.cpp

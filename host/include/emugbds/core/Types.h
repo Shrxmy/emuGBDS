@@ -32,6 +32,8 @@ struct BootRequest {
     std::optional<std::filesystem::path> nds_bios9_path;
     std::optional<std::filesystem::path> nds_firmware_path;
     DsBootMode ds_boot_mode = DsBootMode::Auto;
+    // Start the DS menu even with a Slot-1 card; the firmware then boots whichever cartridge is picked.
+    bool ds_menu = false;
     bool trace_transition = false;
 };
 
