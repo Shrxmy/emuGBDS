@@ -177,6 +177,9 @@ bool RuntimeKernel::Tick(TickResult& result, std::string& error) {
             state_ = RuntimeState::Error;
             return false;
         }
+        // This frame's video and audio pointed into the DS core, which the switch just freed.
+        last_output_.video.reset();
+        last_output_.audio.reset();
         result.status = TickStatus::Transitioned;
     }
 

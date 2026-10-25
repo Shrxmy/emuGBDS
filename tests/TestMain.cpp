@@ -3661,6 +3661,10 @@ void TestRuntimeKernelSlot2Switch(TestContext& t) {
     t.Expect(tick.status == emugbds::runtime::TickStatus::Transitioned, "runtime tick 2 reports transition");
     t.Expect(kernel.active_mode() == emugbds::core::EmuMode::GBA, "runtime switches to GBA mode");
     t.Expect(kernel.last_transition().has_value(), "runtime stores last transition");
+    emugbds::runtime::OutputBundle output{};
+    kernel.PollOutputs(output);
+    t.Expect(!output.video.has_value() && !output.audio.has_value() && !tick.output.video.has_value() && !tick.output.audio.has_value(),
+        "the switch frame hands out no video or audio from the DS core it freed");
 }
 
 void TestRuntimeKernelRejectsMissingGbaRom(TestContext& t) {
