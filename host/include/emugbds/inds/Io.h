@@ -60,6 +60,9 @@ public:
     uint16_t vcount() const noexcept { return vcount_; }
     uint16_t powcnt(int cpu) const noexcept { return cpus_[cpu].powcnt; }
     GameCard& card() noexcept { return card_; }
+    uint64_t firmware_revision() const noexcept { return spi_.firmware_revision(); }
+    // The CPU that owns the GBA slot (EXMEMCNT bit 7): 0 = ARM9, 1 = ARM7.
+    int Slot2Owner() const noexcept { return (exmem_shared_ & (1u << 7)) != 0u ? 1 : 0; }
     Sound& sound() noexcept { return sound_; }
     const Sound& sound() const noexcept { return sound_; }
     // Held buttons as input::GbaKey bits (A..L in bits 0-9, X in 10, Y in 11).

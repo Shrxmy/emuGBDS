@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <string>
+#include <map>
 #include <vector>
 
 namespace emugbds::frontend {
@@ -29,6 +30,8 @@ struct Settings {
     std::string nds_firmware;
     std::string last_directory;
     std::vector<std::string> recent_roms; // most recent first
+    // GBA cartridge left in Slot-2 for a DS game: DS ROM path -> GBA ROM path.
+    std::map<std::string, std::string> slot2_carts;
     int gba_scale = 3;
     int ds_scale = 2;
     DsLayout ds_layout = DsLayout::Vertical;

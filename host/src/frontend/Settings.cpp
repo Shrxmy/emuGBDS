@@ -63,6 +63,11 @@ bool Settings::Load(const std::filesystem::path& path, std::string& error) {
             if (!value.empty() && recent.size() < kMaxRecentRoms) {
                 recent.push_back(value);
             }
+        } else if (key == "slot2") {
+            const size_t bar = value.find('|'); // "|" cannot appear in a Windows path
+            if (bar != std::string::npos && bar > 0u && bar + 1u < value.size()) {
+                slot2_carts[value.substr(0, bar)] = value.substr(bar + 1u);
+            }
         } else if (key == "gba_scale") {
             ReadInt(value, 1, kMaxScale, gba_scale);
         } else if (key == "ds_scale") {
@@ -125,6 +130,9 @@ bool Settings::Save(const std::filesystem::path& path, std::string& error) const
                << "last_directory=" << last_directory << "\n";
         for (const std::string& rom : recent_roms) {
             output << "recent=" << rom << "\n";
+        }
+        for (const auto& [nds, gba] : slot2_carts) {
+            output << "slot2=" << nds << "|" << gba << "\n";
         }
         output << "gba_scale=" << gba_scale << "\n"
                << "ds_scale=" << ds_scale << "\n"

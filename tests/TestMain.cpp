@@ -2655,6 +2655,20 @@ void TestIndsSpiDevices(TestContext& t) {
     exchange(kFlashHold, 0x00u);
     exchange(kFlashLast, 0x5Au);
     t.Expect(bus.firmware_image()[0x100u] == 0x5Au, "SPI flash page write updates the in-memory image");
+    t.Expect(bus.io().firmware_revision() == 1u && bus.firmware_save_path() == dir / "firmware.sav",
+        "a firmware write is counted for saving to <firmware>.sav");
+    // A saved image (settings changed in the firmware menu) is preferred over the dump.
+    std::vector<uint8_t> saved = image;
+    saved[0x100u] = 0x77u;
+    WriteFile(dir / "firmware.sav", saved);
+    emugbds::inds::MemoryBus reloaded;
+    t.Expect(reloaded.LoadFirmware(firmware, error) && reloaded.firmware_image()[0x100u] == 0x77u,
+        "the firmware settings save loads instead of the dump");
+    WriteFile(dir / "firmware.sav", std::vector<uint8_t>(0x100u, 0u));
+    emugbds::inds::MemoryBus mismatch;
+    error.clear();
+    t.Expect(!mismatch.LoadFirmware(firmware, error) && !error.empty(), "a firmware save of the wrong size is refused");
+    std::filesystem::remove(dir / "firmware.sav");
     exchange(kFlashHold, 0x05u);
     t.Expect(exchange(kFlashLast, 0u) == 0x00u, "a completed page write clears write enable");
     exchange(kFlashHold, 0x03u); // READ left held, then the device switches
@@ -2942,6 +2956,36 @@ void TestIndsSound(TestContext& t) {
 
     arm7.Write16(0x04000500u, 0x007Fu); // master enable off
     t.Expect(run(10u) == std::vector<int16_t>({0}), "SOUNDCNT master enable off silences the output");
+}
+
+void TestIndsSlot2Cartridge(TestContext& t) {
+    const auto dir = MakeTempRoot() / "inds-slot2";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    std::vector<uint8_t> rom = BuildSyntheticGbaRom();
+    std::memcpy(rom.data() + 0x400u, "SRAM_V113", 9u);
+    WriteFile(dir / "slot2.gba", rom);
+    std::string error;
+    {
+        emugbds::inds::MemoryBus bus;
+        auto& arm9 = bus.arm9();
+        auto& arm7 = bus.arm7();
+        t.Expect(arm9.Read8(0x0A000000u) == 0xFFu, "an empty GBA slot's SRAM region reads FFh");
+        t.Expect(bus.LoadSlot2Rom(dir / "slot2.gba", error), "a Slot-2 cartridge loads");
+        t.Expect(arm9.Read8(0x08000000u) == rom[0] && arm7.Read8(0x08000000u) == 0u,
+            "the ARM9 owns the GBA slot by default; the ARM7 reads 00h");
+        arm9.Write8(0x0A000010u, 0x42u);
+        t.Expect(arm9.Read8(0x0A010010u) == 0x42u && arm9.Read16(0x0A000010u) == 0x4242u,
+            "Slot-2 SRAM repeats every 64 KiB and fills both bytes of a halfword read");
+        arm9.Write16(0x04000204u, 0x0080u); // EXMEMCNT: the GBA slot goes to the ARM7
+        t.Expect(arm7.Read8(0x08000000u) == rom[0] && arm7.Read8(0x0A000010u) == 0x42u && arm9.Read8(0x0A000010u) == 0u,
+            "EXMEMCNT bit 7 hands the GBA slot to the ARM7");
+        t.Expect(bus.slot2_backup().dirty() && bus.slot2_backup().Flush(error) &&
+            std::filesystem::file_size(dir / "slot2.sav") == 0x8000u, "the cartridge's SRAM saves to <gba rom>.sav");
+    }
+    emugbds::inds::MemoryBus bus;
+    t.Expect(bus.LoadSlot2Rom(dir / "slot2.gba", error) && bus.arm9().Read8(0x0A000010u) == 0x42u,
+        "the GBA save file loads with the Slot-2 cartridge");
 }
 
 void TestIndsGeometryAndWifiStubs(TestContext& t) {
@@ -3577,6 +3621,7 @@ void TestFrontendSettings(TestContext& t) {
     settings.volume = 35;
     settings.muted = true;
     settings.pause_on_focus_loss = true;
+    settings.slot2_carts["D:/roms/dp.nds"] = "D:/roms/emerald.gba";
     t.Expect(settings.Save(path, error), "settings save");
     t.Expect(!std::filesystem::exists(dir / "emugbds.ini.tmp"), "saving leaves no temporary file");
     Settings reloaded;
@@ -3586,7 +3631,8 @@ void TestFrontendSettings(TestContext& t) {
         reloaded.recent_roms == settings.recent_roms && reloaded.ds_scale == 4 &&
         reloaded.ds_layout == DsLayout::Horizontal && reloaded.fast_forward_speed == 0 &&
         reloaded.gba_via_ds_firmware && reloaded.keys == settings.keys && reloaded.pad == settings.pad &&
-        reloaded.volume == 35 && reloaded.muted && reloaded.pause_on_focus_loss, "every setting survives a save and load");
+        reloaded.volume == 35 && reloaded.muted && reloaded.pause_on_focus_loss &&
+        reloaded.slot2_carts == settings.slot2_carts, "every setting survives a save and load");
 
     {
         std::ofstream edited(path, std::ios::trunc);
@@ -3608,7 +3654,7 @@ int RunUnitTests() {
         void (*fn)(TestContext&);
     };
 
-    const std::array<NamedTest, 68> tests = {{
+    const std::array<NamedTest, 69> tests = {{
         {"frontend_settings", &TestFrontendSettings},
         {"arm_v5_clz_and_saturation", &TestArmV5ClzAndSaturation},
         {"arm_v5_halfword_multiplies", &TestArmV5HalfwordMultiplies},
@@ -3665,6 +3711,7 @@ int RunUnitTests() {
         {"inds_backup_memory", &TestIndsBackupMemory},
         {"inds_geometry_and_wifi_stubs", &TestIndsGeometryAndWifiStubs},
         {"inds_sound", &TestIndsSound},
+        {"inds_slot2_cartridge", &TestIndsSlot2Cartridge},
         {"inds_math_unit", &TestIndsMathUnit},
         {"inds_rtc", &TestIndsRtc},
         {"inds_haltcnt_gba_mode_transition", &TestIndsHaltcntGbaModeTransition},

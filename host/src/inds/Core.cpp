@@ -1,5 +1,7 @@
 #include "emugbds/inds/Core.h"
 
+#include "emugbds/core/SaveFile.h"
+
 #include "emugbds/arm/CpuConstants.h"
 
 #include <algorithm>
@@ -203,6 +205,13 @@ bool Core::RunFrame(std::string& error) {
                 event.reason = "DS ARM7 entered GBA mode (HALTCNT)";
                 pending_transition_ = event;
                 cpus_active_ = false;
+                // The GBA core reads the Slot-2 save from disk next: write ours first, then let go of
+                // it, so the DS side never flushes a stale copy over what the GBA game saves later.
+                std::string save_error;
+                if (!FlushSave(save_error)) {
+                    std::cerr << "[inds] " << save_error << "\n";
+                }
+                bus_.slot2_backup() = ingba::Backup{};
                 if (trace_transition_) {
                     std::cout << "[inds] ARM7 wrote HALTCNT GBA mode; switching to GBA\n";
                 }
@@ -313,10 +322,14 @@ void Core::FlushSaveWhenIdle() {
     // Save after the game has stopped writing for a second, so bursts of page writes cost one file write.
     constexpr uint32_t kIdleFrames = 60u;
     const Backup& backup = bus_.io().card().backup();
-    if (backup.revision() != save_revision_) {
-        save_revision_ = backup.revision();
+    const ingba::Backup& slot2 = bus_.slot2_backup();
+    const uint64_t firmware = bus_.io().firmware_revision();
+    const uint64_t revision = backup.revision() + slot2.revision() + firmware; // all only ever grow
+    if (revision != save_revision_) {
+        save_revision_ = revision;
         save_idle_frames_ = 0u;
-    } else if (backup.dirty() && ++save_idle_frames_ >= kIdleFrames) {
+    } else if ((backup.dirty() || slot2.dirty() || firmware != firmware_flushed_revision_) &&
+               ++save_idle_frames_ >= kIdleFrames) {
         std::string error;
         if (!FlushSave(error)) {
             std::cerr << "[inds] " << error << "\n";
@@ -327,7 +340,25 @@ void Core::FlushSaveWhenIdle() {
 
 
 bool Core::FlushSave(std::string& error) {
-    return bus_.io().card().backup().Flush(error);
+    // Both saves are attempted; the first error is reported.
+    std::string slot2_error;
+    std::string firmware_error;
+    const bool card = bus_.io().card().backup().Flush(error);
+    const bool slot2 = bus_.slot2_backup().Flush(slot2_error);
+    bool firmware = true;
+    const uint64_t firmware_revision = bus_.io().firmware_revision();
+    if (firmware_revision != firmware_flushed_revision_ && !bus_.firmware_save_path().empty()) {
+        firmware = core::WriteFileReplacing(bus_.firmware_save_path(), bus_.firmware_image(), firmware_error);
+        if (firmware) {
+            firmware_flushed_revision_ = firmware_revision;
+        }
+    }
+    if (card && !slot2) {
+        error = slot2_error;
+    } else if (card && slot2 && !firmware) {
+        error = firmware_error;
+    }
+    return card && slot2 && firmware;
 }
 
 
@@ -375,6 +406,7 @@ bool Core::Reset(std::string& error) {
     arm7_.WriteCpsr(kCpsrSvc);
     arm9_halted_ = false;
     arm7_halted_ = false;
+    firmware_flushed_revision_ = 0u; // ResetMemory resets the SPI revision with the rest of the I/O
     cpus_active_ = false;
     firmware_running_ = false;
     pending_transition_.reset();

@@ -19,6 +19,8 @@ public:
     uint32_t ReadWord() const noexcept { return spicnt_ | (static_cast<uint32_t>(spidata_) << 16u); }
     // Returns true when a transfer completed with its IRQ enabled.
     bool WriteWord(uint32_t value, uint32_t mask, std::vector<uint8_t>& firmware);
+    // Increments whenever a firmware flash write or erase changes the image.
+    uint64_t firmware_revision() const noexcept { return firmware_revision_; }
     // Pen state as the touchscreen controller sees it (12-bit ADC values).
     void SetTouch(bool down, uint16_t adc_x, uint16_t adc_y) noexcept {
         pen_down_ = down;
@@ -35,6 +37,7 @@ private:
     uint8_t TouchscreenTransfer(uint8_t out) noexcept;
     void Deselect() noexcept;
 
+    uint64_t firmware_revision_ = 0;
     uint16_t spicnt_ = 0;
     uint8_t spidata_ = 0;
     bool selected_ = false; // Chip select held from a previous transfer

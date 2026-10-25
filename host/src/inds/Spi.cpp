@@ -119,6 +119,7 @@ uint8_t Spi::FirmwareTransfer(uint8_t out, std::vector<uint8_t>& firmware) {
                         *byte = 0xFFu;
                     }
                 }
+                ++firmware_revision_;
                 flash_write_enabled_ = false;
             }
             return 0u;
@@ -131,10 +132,11 @@ uint8_t Spi::FirmwareTransfer(uint8_t out, std::vector<uint8_t>& firmware) {
             return byte != nullptr ? *byte : 0xFFu;
         }
         if (flash_write_enabled_ && (flash_command_ == kFlashPageWrite || flash_command_ == kFlashPageProgram)) {
-            // Writes stay within the 256-byte page and only in memory: the firmware file is never modified.
+            // Writes stay within the 256-byte page; the core saves the changed image (never the dump itself).
             const uint32_t address = (flash_address_ & ~0xFFu) | ((flash_address_ + position_ - 4u) & 0xFFu);
             if (uint8_t* byte = at(address)) {
                 *byte = flash_command_ == kFlashPageWrite ? out : static_cast<uint8_t>(*byte & out);
+                ++firmware_revision_;
             }
         }
         return 0u;

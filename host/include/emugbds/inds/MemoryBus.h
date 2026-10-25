@@ -8,6 +8,7 @@
 #include "emugbds/inds/Engine2d.h"
 #include "emugbds/inds/Io.h"
 #include "emugbds/inds/VideoMemory.h"
+#include "emugbds/ingba/Backup.h"
 
 #include <array>
 #include <cstdint>
@@ -46,6 +47,7 @@ public:
     static constexpr uint32_t kSharedWramSize = 0x00008000u;
     static constexpr uint32_t kArm7WramSize = 0x00010000u;
     static constexpr uint32_t kSlot2Base = 0x08000000u;
+    static constexpr uint32_t kSlot2RamRegion = 0x0Au; // A000000h-AFFFFFFh
     static constexpr uint32_t kArm9BiosBase = 0xFFFF0000u;
     static constexpr uint32_t kArm9BiosRegionSize = 0x8000u;
 
@@ -68,8 +70,14 @@ public:
     bool HasNdsRom() const noexcept { return !nds_rom_.empty(); }
     bool HasSlot2Rom() const noexcept { return !slot2_rom_.empty(); }
     const std::vector<uint8_t>& nds_rom() const noexcept { return nds_rom_; }
-    // The firmware flash contents; SPI writes change this copy, never the file.
+    // The Slot-2 GBA cartridge's save chip (SRAM/FLASH at 0A000000h), saved to <gba rom>.sav.
+    ingba::Backup& slot2_backup() noexcept { return slot2_backup_; }
+    const ingba::Backup& slot2_backup() const noexcept { return slot2_backup_; }
+    // The firmware flash contents; SPI writes change this copy, never the dump. Settings the firmware
+    // saves (user name, birthday, language, touch calibration...) persist in <firmware>.sav, which
+    // LoadFirmware prefers over the dump when it exists.
     std::vector<uint8_t>& firmware_image() noexcept { return firmware_; }
+    const std::filesystem::path& firmware_save_path() const noexcept { return firmware_save_path_; }
 
     // Clears RAM and TCM and restores power-on I/O, WRAMCNT, and CP15; loaded images stay.
     void ResetMemory();
@@ -120,6 +128,7 @@ private:
     std::vector<uint8_t> bios7_;
     std::vector<uint8_t> bios9_;
     std::vector<uint8_t> firmware_;
+    std::filesystem::path firmware_save_path_;
     std::vector<uint8_t> main_ram_;
     std::vector<uint8_t> shared_wram_;
     std::vector<uint8_t> arm7_wram_;
@@ -127,6 +136,7 @@ private:
     std::vector<uint8_t> dtcm_;
     std::vector<uint8_t> nds_rom_;
     std::vector<uint8_t> slot2_rom_;
+    ingba::Backup slot2_backup_;
     uint8_t wramcnt_ = 3u;
     Cp15 cp15_{};
     VideoMemory video_{};

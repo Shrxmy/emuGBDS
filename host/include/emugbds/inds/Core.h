@@ -111,6 +111,7 @@ private:
     uint64_t frame_counter_ = 0;
     uint64_t firmware_menu_frame_counter_ = 0;
     uint64_t save_revision_ = 0;
+    uint64_t firmware_flushed_revision_ = 0; // SPI firmware revision last written to <firmware>.sav
     uint32_t save_idle_frames_ = 0;
     std::vector<uint32_t> frame_ = std::vector<uint32_t>(kScreenWidth * kScreenHeight * 2u, 0xFF000000u);
 };

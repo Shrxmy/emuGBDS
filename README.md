@@ -91,6 +91,15 @@ firmware hands the console to the GBA core:
 Without those files, `ds-firmware` boot simulates the menu and switches to GBA
 after two frames (`--trace-transition --frames 300` shows it headless).
 
+Settings you change in the DS menu (name, birthday, language, touch
+calibration...) are kept in `dsfirmware.sav` next to your firmware dump, which
+is loaded instead of the dump from then on; the dump itself is never modified.
+
+Both slots: a DS game can have a GBA cartridge in Slot-2 (File > Slot-2
+cartridge, remembered per DS game, or `--nds game.nds --slot2 game.gba`). The DS
+game sees the cartridge's ROM and its SRAM/FLASH save (the same `<gba rom>.sav`
+GBA mode uses), as games like Pokemon Diamond/Pearl/Platinum need for Pal Park.
+
 Interactive controls:
 
 - `Z` = `A`

@@ -53,7 +53,24 @@ bool MemoryBus::LoadBios9(const std::filesystem::path& bios_path, std::string& e
 }
 
 bool MemoryBus::LoadFirmware(const std::filesystem::path& firmware_path, std::string& error) {
-    return LoadWholeFile(firmware_path, firmware_, error);
+    if (!LoadWholeFile(firmware_path, firmware_, error)) {
+        return false;
+    }
+    firmware_save_path_ = firmware_path;
+    firmware_save_path_.replace_extension(".sav");
+    std::error_code exists_error;
+    if (std::filesystem::exists(firmware_save_path_, exists_error)) {
+        std::vector<uint8_t> saved;
+        if (!LoadWholeFile(firmware_save_path_, saved, error)) {
+            return false;
+        }
+        if (saved.size() != firmware_.size()) {
+            error = "Firmware save " + firmware_save_path_.string() + " does not match the size of " + firmware_path.string();
+            return false; // refusing beats silently dropping the user's settings
+        }
+        firmware_ = std::move(saved);
+    }
+    return true;
 }
 
 bool MemoryBus::LoadNdsRom(const std::filesystem::path& rom_path, std::string& error) {
@@ -61,7 +78,21 @@ bool MemoryBus::LoadNdsRom(const std::filesystem::path& rom_path, std::string& e
 }
 
 bool MemoryBus::LoadSlot2Rom(const std::filesystem::path& rom_path, std::string& error) {
-    return LoadWholeFile(rom_path, slot2_rom_, error);
+    std::vector<uint8_t> rom;
+    if (!LoadWholeFile(rom_path, rom, error)) {
+        return false;
+    }
+    // The cartridge brings its save chip (the same <rom>.sav GBA mode uses). EEPROMs are not
+    // mapped in the DS slot, so only SRAM and FLASH games show their saves here.
+    std::filesystem::path save_path = rom_path;
+    save_path.replace_extension(".sav");
+    ingba::Backup backup;
+    if (!backup.Load(ingba::Backup::Detect(rom), save_path, error)) {
+        return false;
+    }
+    slot2_rom_ = std::move(rom);
+    slot2_backup_ = std::move(backup);
+    return true;
 }
 
 void MemoryBus::ClearNdsRom() {
@@ -70,6 +101,7 @@ void MemoryBus::ClearNdsRom() {
 
 void MemoryBus::ClearSlot2Rom() {
     slot2_rom_.clear();
+    slot2_backup_ = ingba::Backup{};
 }
 
 void MemoryBus::ResetMemory() {
@@ -114,7 +146,7 @@ uint8_t* MemoryBus::Arm9Pointer(uint32_t address, bool write, bool use_tcm) {
         return video_.CpuPointer(true, address);
     case 0x08u:
     case 0x09u:
-        return !write && !slot2_rom_.empty() ? &slot2_rom_[(address - kSlot2Base) % slot2_rom_.size()] : nullptr;
+        return !write && !slot2_rom_.empty() && io_.Slot2Owner() == 0 ? &slot2_rom_[(address - kSlot2Base) % slot2_rom_.size()] : nullptr;
     case 0xFFu: // The 32 KiB BIOS region is not mirrored beyond itself.
         return !write && address - kArm9BiosBase < kArm9BiosRegionSize && !bios9_.empty()
             ? &bios9_[(address - kArm9BiosBase) % bios9_.size()]
@@ -145,7 +177,7 @@ uint8_t* MemoryBus::Arm7Pointer(uint32_t address, bool write) {
         return video_.CpuPointer(false, address); // VRAM C/D in ARM7 mode
     case 0x08u:
     case 0x09u:
-        return !write && !slot2_rom_.empty() ? &slot2_rom_[(address - kSlot2Base) % slot2_rom_.size()] : nullptr;
+        return !write && !slot2_rom_.empty() && io_.Slot2Owner() == 1 ? &slot2_rom_[(address - kSlot2Base) % slot2_rom_.size()] : nullptr;
     default:
         return nullptr;
     }
@@ -170,6 +202,16 @@ uint32_t MemoryBus::Read(bool arm9, uint32_t address, uint32_t size, bool use_tc
         return value;
     }
 
+    if ((address >> 24u) == kSlot2RamRegion) {
+        // GBA slot SRAM/FLASH, an 8-bit bus repeated every 64 KiB: the byte fills every lane. The CPU
+        // without the slot reads 00h; an empty slot reads FFh (GBATEK "GBA Slot").
+        // shortcut: an owned slot without a cartridge reads ROM as 00h, not the Addr/2 open-bus pattern.
+        if (self.io_.Slot2Owner() != (arm9 ? 0 : 1)) {
+            return 0u;
+        }
+        const uint8_t byte = slot2_rom_.empty() ? 0xFFu : slot2_backup_.Read8(address & 0xFFFFu);
+        return byte * (size == 1u ? 1u : size == 2u ? 0x0101u : 0x01010101u);
+    }
     const bool io = (address >> 24u) == kIoRegion;
     const uint32_t mask = LaneMask(address, size);
     uint32_t word = 0u;
@@ -199,6 +241,12 @@ void MemoryBus::Write(bool arm9, uint32_t address, uint32_t value, uint32_t size
         return;
     }
 
+    if ((address >> 24u) == kSlot2RamRegion) {
+        if (io_.Slot2Owner() == (arm9 ? 0 : 1) && !slot2_rom_.empty()) {
+            slot2_backup_.Write8(address & 0xFFFFu, static_cast<uint8_t>(value)); // one byte reaches the 8-bit bus
+        }
+        return;
+    }
     const bool io = (address >> 24u) == kIoRegion;
     const uint32_t shift = (address & 3u) * 8u;
     if (io && io_.WriteWord(arm9 ? 0 : 1, address & ~3u, size == 4u ? value : (value << shift), LaneMask(address, size))) {
