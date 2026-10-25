@@ -12,6 +12,7 @@
 #include "emugbds/inds/Rtc.h"
 #include "emugbds/inds/Spi.h"
 #include "emugbds/inds/Timers.h"
+#include "emugbds/inds/Wifi.h"
 
 #include <array>
 #include <cstdint>
@@ -57,6 +58,7 @@ public:
     bool ConsumeGbaModeRequest() noexcept { return Consume(gba_mode_requested_); }
     uint16_t vcount() const noexcept { return vcount_; }
     uint16_t powcnt(int cpu) const noexcept { return cpus_[cpu].powcnt; }
+    GameCard& card() noexcept { return card_; }
     // Held buttons as input::GbaKey bits (A..L in bits 0-9, X in 10, Y in 11).
     void SetKeys(uint32_t held) noexcept { held_keys_ = held; }
     void SetTouch(bool down, uint16_t adc_x, uint16_t adc_y) noexcept {
@@ -109,6 +111,7 @@ private:
     int CardOwner() const noexcept { return (exmem_shared_ & (1u << 11)) != 0u ? 1 : 0; }
     void PumpCardDma();
     uint16_t ExtKeys() const noexcept;
+    void AssertGeometryIrq() noexcept;
     void RaiseCardIrq() noexcept;
 
     MemoryBus& memory_;
@@ -118,6 +121,7 @@ private:
     Spi spi_{};
     MathUnit math_{};
     Rtc rtc_{};
+    Wifi wifi_{};
     // ARM7 sound registers 400h-51Fh.
     // shortcut: plain storage; channels and capture finish at once (busy bits clear) until DS audio exists.
     std::array<uint32_t, 0x48> sound_{};
@@ -127,6 +131,7 @@ private:
     uint16_t rcnt_ = 0; // ARM7 RCNT, stored only (no serial port)
     uint32_t held_keys_ = 0;
     bool pen_down_ = false;
+    uint8_t gx_irq_mode_ = 0; // GXSTAT bits 30-31
     uint16_t vcount_ = 0;
     bool arm7_halt_requested_ = false;
     bool gba_mode_requested_ = false;

@@ -40,6 +40,14 @@ constexpr uint32_t kMathLast = 0x040002BCu;
 constexpr uint32_t kSoundFirst = 0x04000400u; // ARM7 sound channels, control, bias, capture
 constexpr uint32_t kSoundLast = 0x0400051Cu;
 constexpr uint32_t kSoundCaptureCnt = 0x04000508u;
+constexpr uint32_t kWifiFirst = 0x04800000u; // ARM7 wireless (registers and Wifi RAM)
+constexpr uint32_t kWifiLast = 0x0480FFFCu;
+constexpr uint32_t kGeometryFirst = 0x04000320u; // ARM9 3D registers, geometry FIFO and command ports
+constexpr uint32_t kGeometryLast = 0x040006A0u;
+constexpr uint32_t kGxStat = 0x04000600u;
+constexpr uint32_t kGxFifoIrq = 1u << 21;
+// shortcut: no 3D engine yet; commands are discarded, so the FIFO always reads empty and idle.
+constexpr uint32_t kGxStatIdle = (1u << 25) | (1u << 26); // FIFO less than half full, empty
 
 constexpr uint16_t kDispStatWritable = 0xFFB8u; // IRQ enables, LYC bit 8, LYC
 constexpr uint16_t kKeysReleased = 0x03FFu;
@@ -65,12 +73,14 @@ void Io::Reset() {
     spi_.Reset();
     math_.Reset();
     rtc_.Reset();
+    wifi_.Reset();
     sound_ = {};
     dma_fill_ = {};
     exmem_shared_ = 0u;
     wifiwaitcnt_ = 0u;
     rcnt_ = 0u;
     held_keys_ = 0u;
+    gx_irq_mode_ = 0u;
     pen_down_ = false;
     vcount_ = 0u;
     arm7_halt_requested_ = false;
@@ -123,6 +133,14 @@ bool Io::ReadWord(int cpu, uint32_t address, uint32_t mask, uint32_t& value) {
     }
     if (cpu == 0 && address >= kMathFirst && address <= kMathLast) {
         value = math_.ReadWord(address - kMathFirst);
+        return true;
+    }
+    if (cpu == 1 && address >= kWifiFirst && address <= kWifiLast) {
+        value = wifi_.ReadWord(address - kWifiFirst);
+        return true;
+    }
+    if (cpu == 0 && address >= kGeometryFirst && address <= kGeometryLast) {
+        value = address == kGxStat ? kGxStatIdle | (static_cast<uint32_t>(gx_irq_mode_) << 30u) : 0u;
         return true;
     }
     if (cpu == 1 && address >= kSoundFirst && address <= kSoundLast) {
@@ -232,6 +250,17 @@ bool Io::WriteWord(int cpu, uint32_t address, uint32_t value, uint32_t mask) {
         math_.WriteWord(address - kMathFirst, value, mask);
         return true;
     }
+    if (cpu == 1 && address >= kWifiFirst && address <= kWifiLast) {
+        wifi_.WriteWord(address - kWifiFirst, value, mask);
+        return true;
+    }
+    if (cpu == 0 && address >= kGeometryFirst && address <= kGeometryLast) {
+        if (address == kGxStat && (mask & 0xC0000000u) != 0u) {
+            gx_irq_mode_ = static_cast<uint8_t>((value >> 30u) & 3u);
+            AssertGeometryIrq();
+        }
+        return true;
+    }
     if (cpu == 1 && address >= kSoundFirst && address <= kSoundLast) {
         uint32_t& word = sound_[(address - kSoundFirst) / 4u];
         word = Merge(word, value, mask);
@@ -292,6 +321,7 @@ bool Io::WriteWord(int cpu, uint32_t address, uint32_t value, uint32_t mask) {
         return true;
     case kIf:
         self.iflags &= ~(value & mask); // Write 1 to acknowledge
+        AssertGeometryIrq();
         return true;
     case kVramCntAD:
     case kVramCntEG:
@@ -473,6 +503,15 @@ void Io::PumpCardDma() {
         }
     }
     RaiseCardIrq();
+}
+
+
+void Io::AssertGeometryIrq() noexcept {
+    // The geometry FIFO IRQ is level-triggered: it stays set while its condition holds,
+    // and the (stubbed) FIFO is always empty, which meets both "less than half" and "empty".
+    if (gx_irq_mode_ == 1u || gx_irq_mode_ == 2u) {
+        cpus_[0].iflags |= kGxFifoIrq;
+    }
 }
 
 

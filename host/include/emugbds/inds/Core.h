@@ -52,6 +52,8 @@ public:
     // bottom screen in pixels; the touchscreen reports it through the firmware's calibration.
     void SetKeys(uint32_t held) noexcept { bus_.io().SetKeys(held); }
     void SetTouch(bool down, uint32_t x, uint32_t y);
+    // Writes the cartridge save file now if it changed (also done after writes settle).
+    bool FlushSave(std::string& error);
     std::optional<nds::NdsCartridgeHeaderInfo> nds_header() const noexcept { return nds_header_; }
     std::optional<gba::GbaCartridgeHeaderInfo> slot2_header() const noexcept { return slot2_header_; }
 
@@ -80,6 +82,7 @@ private:
     // Renders visible line `line` of both engines into the screen POWCNT1 routes each to.
     void RenderLine(uint32_t line);
     void DumpFrameIfRequested() const;
+    void FlushSaveWhenIdle();
 
     MemoryBus bus_{};
     CpuHost arm9_host_{*this, true};
@@ -103,6 +106,8 @@ private:
     core::DsBootMode boot_mode_ = core::DsBootMode::Auto;
     uint64_t frame_counter_ = 0;
     uint64_t firmware_menu_frame_counter_ = 0;
+    uint64_t save_revision_ = 0;
+    uint32_t save_idle_frames_ = 0;
     std::vector<uint32_t> frame_ = std::vector<uint32_t>(kScreenWidth * kScreenHeight * 2u, 0xFF000000u);
 };
 

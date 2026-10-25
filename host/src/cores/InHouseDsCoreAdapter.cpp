@@ -1,6 +1,7 @@
 #include "emugbds/cores/InHouseDsCoreAdapter.h"
 
 #include <filesystem>
+#include <iostream>
 
 namespace emugbds::cores {
 
@@ -110,6 +111,10 @@ bool InHouseDsCoreAdapter::IsRunning() const noexcept {
 }
 
 void InHouseDsCoreAdapter::Shutdown() noexcept {
+    std::string error;
+    if (initialized_ && !core_->FlushSave(error)) {
+        std::cerr << "[inds] " << error << "\n";
+    }
     configured_ = false;
     initialized_ = false;
     primary_loaded_ = false;

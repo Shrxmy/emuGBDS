@@ -109,6 +109,11 @@ Current DS core status:
   "Start GBA game" hands off to the GBA core through HALTCNT. Without the
   images it simulates the Slot-2 pick.
 - VRAM banking, palettes, OAM, and both 2D engines (no 3D, mosaic, or capture).
+- Direct-booted cartridges read their ROM through the card bus (B7h), keep saves
+  in `<rom>.sav` next to the ROM, and find a stubbed wifi chip and an idle 3D
+  geometry engine. Fire Emblem: Shadow Dragon reaches its menus and story;
+  games that draw with the 3D engine (e.g. Devil Survivor's main screen) show
+  nothing in that layer yet.
 
 ## 6) Boot Policy (Default BIOS Paths)
 

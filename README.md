@@ -47,11 +47,13 @@ Optional uncapped interactive run:
 .\build\Release\emugbds.exe --mode gba --gba .\roms\Fire_Emblem.gba --gba-core internal --interactive --uncapped
 ```
 
-In-house DS ROM run:
+In-house DS game (direct boot; saves go to `<rom>.sav` next to the ROM):
 
 ```powershell
-.\build\Release\emugbds.exe --mode ds --nds .\roms\Fire_Emblem_Shadow_Dragon.nds --frames 300
+.\build\Release\emugbds.exe --mode ds --nds .\roms\Fire_Emblem_Shadow_Dragon.nds --interactive
 ```
+
+DS games that draw with the 3D engine show nothing in that layer yet.
 
 DS firmware menu with a GBA game in Slot-2 (no `.nds` inserted). With
 `bios/nds-bios/biosnds7.bin`, `biosnds9.bin`, and `dsfirmware.bin` present, the

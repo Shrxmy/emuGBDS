@@ -27,6 +27,18 @@ constexpr uint32_t kSecureAreaOffset = 0x4000u;
 constexpr uint32_t kDestroyedSecureAreaId = 0xE7FFDEFFu;
 constexpr uint32_t kBootDtcmBase = 0x027C0000u; // Above the 32 MiB ITCM window, below the header copy.
 
+// Offset of the current firmware user settings (the copy with the newer 7-bit update
+// counter, among the two at the end of the image), or 0 when the image is too small.
+size_t CurrentUserSettings(const std::vector<uint8_t>& firmware) {
+    if (firmware.size() < 0x20000u) {
+        return 0u;
+    }
+    const size_t first = firmware.size() - 0x200u;
+    const uint32_t count0 = firmware[first + 0x70u] | (firmware[first + 0x71u] << 8u);
+    const uint32_t count1 = firmware[first + 0x170u] | (firmware[first + 0x171u] << 8u);
+    return first + (((count1 - count0) & 0x7Fu) == 1u ? 0x100u : 0u);
+}
+
 constexpr uint32_t kCpsrSvc = 0xD3u; // IRQ/FIQ disabled, ARM state
 constexpr uint32_t kCpsrIrq = 0xD2u;
 constexpr uint32_t kCpsrSys = 0xDFu;
@@ -113,6 +125,9 @@ bool Core::Initialize(std::string& error) {
 }
 
 bool Core::LoadPrimaryRom(const std::filesystem::path& rom_path, std::string& error) {
+    if (!FlushSave(error)) {
+        return false; // Keep the previous game's unsaved changes rather than dropping them.
+    }
     if (!rom_path.empty()) {
         nds::NdsCartridgeHeaderInfo header{};
         if (!nds::InspectNdsCartridgeHeader(rom_path, header, error)) {
@@ -121,11 +136,17 @@ bool Core::LoadPrimaryRom(const std::filesystem::path& rom_path, std::string& er
         if (!bus_.LoadNdsRom(rom_path, error)) {
             return false;
         }
+        std::filesystem::path save_path = rom_path;
+        save_path.replace_extension(".sav");
+        if (!bus_.io().card().backup().Load(save_path, error)) {
+            return false;
+        }
 
         nds_header_ = std::move(header);
         nds_rom_loaded_ = true;
     } else {
         bus_.ClearNdsRom();
+        bus_.io().card().backup().Clear();
         nds_header_.reset();
         nds_rom_loaded_ = false;
     }
@@ -195,6 +216,7 @@ bool Core::RunFrame(std::string& error) {
 
     ++frame_counter_;
     DumpFrameIfRequested();
+    FlushSaveWhenIdle();
 
     if (ShouldRequestFirmwareSlot2Transition()) {
         ++firmware_menu_frame_counter_;
@@ -250,13 +272,8 @@ void Core::SetTouch(bool down, uint32_t x, uint32_t y) {
         // Invert the firmware's ADC-to-pixel mapping from its two calibration points (user settings 58h-63h).
         const std::vector<uint8_t>& firmware = bus_.firmware_image();
         int32_t adc1[2] = {0, 0}, adc2[2] = {4095, 4095}, scr1[2] = {0, 0}, scr2[2] = {255, 191};
-        if (firmware.size() >= 0x20000u) {
-            const size_t first = firmware.size() - 0x200u;
+        if (const size_t user = CurrentUserSettings(firmware)) {
             const auto read16 = [&](size_t at) { return static_cast<int32_t>(firmware[at] | (firmware[at + 1u] << 8u)); };
-            // The copy with the newer update counter (7-bit, wrapping) holds the current settings.
-            const uint32_t count0 = static_cast<uint32_t>(read16(first + 0x70u));
-            const uint32_t count1 = static_cast<uint32_t>(read16(first + 0x170u));
-            const size_t user = first + (((count1 - count0) & 0x7Fu) == 1u ? 0x100u : 0u);
             const int32_t cal[8] = {read16(user + 0x58u), read16(user + 0x5Au), firmware[user + 0x5Cu], firmware[user + 0x5Du],
                 read16(user + 0x5Eu), read16(user + 0x60u), firmware[user + 0x62u], firmware[user + 0x63u]};
             if (cal[0] != cal[4] && cal[1] != cal[5] && cal[2] != cal[6] && cal[3] != cal[7]) {
@@ -287,6 +304,28 @@ void Core::RenderLine(uint32_t line) {
     const bool a_on_top = (powcnt & 0x8000u) != 0u; // POWCNT1 display swap
     bus_.engine(0).RenderLine(line, (powcnt & 2u) != 0u, a_on_top ? top : bottom);
     bus_.engine(1).RenderLine(line, (powcnt & 0x200u) != 0u, a_on_top ? bottom : top);
+}
+
+
+void Core::FlushSaveWhenIdle() {
+    // Save after the game has stopped writing for a second, so bursts of page writes cost one file write.
+    constexpr uint32_t kIdleFrames = 60u;
+    const Backup& backup = bus_.io().card().backup();
+    if (backup.revision() != save_revision_) {
+        save_revision_ = backup.revision();
+        save_idle_frames_ = 0u;
+    } else if (backup.dirty() && ++save_idle_frames_ >= kIdleFrames) {
+        std::string error;
+        if (!FlushSave(error)) {
+            std::cerr << "[inds] " << error << "\n";
+            save_idle_frames_ = 0u; // retry after another quiet second
+        }
+    }
+}
+
+
+bool Core::FlushSave(std::string& error) {
+    return bus_.io().card().backup().Flush(error);
 }
 
 
@@ -386,6 +425,28 @@ bool Core::DirectBoot(std::string& error) {
         !copy(bus_.arm7(), header.arm7_rom_offset, header.arm7_ram_address, header.arm7_size, "ARM7")) {
         return false;
     }
+    // What the BIOS and firmware leave in main RAM for the game (GBATEK "NDS BIOS RAM Usage").
+    const uint32_t chip_id = bus_.io().card().ChipId();
+    const uint16_t header_crc = rom.size() >= 0x160u ? static_cast<uint16_t>(rom[0x15Eu] | (rom[0x15Fu] << 8u)) : 0u;
+    const uint16_t secure_crc = rom.size() >= 0x6Eu ? static_cast<uint16_t>(rom[0x6Cu] | (rom[0x6Du] << 8u)) : 0u;
+    for (uint32_t base : {0x027FF800u, 0x027FFC00u}) {
+        bus_.arm9().Write32(base + 0x0u, chip_id);
+        bus_.arm9().Write32(base + 0x4u, chip_id);
+        bus_.arm9().Write16(base + 0x8u, header_crc);
+        bus_.arm9().Write16(base + 0xAu, secure_crc);
+    }
+    bus_.arm9().Write16(0x027FF850u, 0x5835u); // ARM7 BIOS CRC
+    bus_.arm9().Write16(0x027FFC10u, 0x5835u);
+    bus_.arm9().Write32(0x027FF880u, 7u);      // boot handshake values at cart boot time
+    bus_.arm9().Write32(0x027FF884u, 6u);
+    bus_.arm9().Write16(0x027FFC40u, 1u);      // boot indicator: normal cartridge boot
+    const std::vector<uint8_t>& firmware = bus_.firmware_image();
+    if (const size_t user = CurrentUserSettings(firmware)) { // current user settings copy at 27FFC80h
+        for (uint32_t i = 0u; i < 0x70u; ++i) {
+            bus_.arm7().Write8(0x027FFC80u + i, firmware[user + i]);
+        }
+    }
+
     // The BIOS verifies a decrypted secure area's "encryObj" ID and then destroys it.
     if (header.arm9_rom_offset == kSecureAreaOffset && rom.size() >= kSecureAreaOffset + 8u &&
         std::memcmp(&rom[kSecureAreaOffset], "encryObj", 8u) == 0) {

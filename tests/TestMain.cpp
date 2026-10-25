@@ -3,6 +3,7 @@
 #include "emugbds/cores/InHouseDsCoreAdapter.h"
 #include "emugbds/cores/InHouseGbaCoreAdapter.h"
 #include "emugbds/input/GbaKeys.h"
+#include "emugbds/inds/Backup.h"
 #include "emugbds/inds/Core.h"
 #include "emugbds/inds/MemoryBus.h"
 #include "emugbds/ingba/Core.h"
@@ -2090,8 +2091,8 @@ void TestIndsMemoryBus(TestContext& t) {
     arm7.Write32(0x03800010u, 0x12345678u);
     t.Expect(arm7.Read32(0x0380FFF0u + 0x20u) == 0x12345678u, "inds ARM7 WRAM mirrors every 64 KiB");
 
-    t.Expect(arm9.Read32(0x04000400u) == 0u, "inds unemulated I/O reads as zero");
-    t.Expect(bus.arm9_unmapped().reads.count(0x04000400u) == 1u, "inds logs unemulated I/O reads");
+    t.Expect(arm9.Read32(0x04000700u) == 0u, "inds unemulated I/O reads as zero");
+    t.Expect(bus.arm9_unmapped().reads.count(0x04000700u) == 1u, "inds logs unemulated I/O reads");
     arm9.Write16(0x0B000000u, 0x7FFFu);
     t.Expect(bus.arm9_unmapped().writes.count(0x0B000000u) == 1u, "inds logs writes to unemulated memory by block");
 
@@ -2364,6 +2365,130 @@ void TestIndsVramBanking(TestContext& t) {
     arm9.Write16(0x05000402u, 0x7FFFu);
     t.Expect(arm9.Read16(0x05000C02u) == 0x7FFFu && bus.video().Palette(1, false, 1u) == 0x7FFFu,
         "palette RAM mirrors every 2 KiB; 5000400h is engine B's BG palette");
+}
+
+// Card commands as the CPU issues them: 8 command bytes at 40001A8h, then a 4-byte or 200h block.
+void TestIndsCartridgeReads(TestContext& t) {
+    const auto dir = MakeTempRoot() / "inds-cart";
+    std::filesystem::create_directories(dir);
+    std::vector<uint8_t> image(0x20000u, 0u);
+    for (size_t i = 0u; i < image.size(); ++i) {
+        image[i] = static_cast<uint8_t>(i ^ (i >> 8u));
+    }
+    WriteFile(dir / "cart.nds", image);
+    emugbds::inds::MemoryBus bus;
+    std::string error;
+    t.Expect(bus.LoadNdsRom(dir / "cart.nds", error), "cartridge image loads");
+    auto& arm9 = bus.arm9();
+    arm9.Write16(0x040001A0u, 0x8000u); // slot enabled, ROM mode
+    auto command = [&](uint32_t low, uint32_t high, uint32_t block) {
+        arm9.Write32(0x040001A8u, low);
+        arm9.Write32(0x040001ACu, high);
+        arm9.Write32(0x040001A4u, 0xA0000000u | (block << 24u));
+    };
+    command(0x000000B8u, 0u, 7u); // B8h: chip ID
+    t.Expect(arm9.Read32(0x04100010u) == 0x000000C2u, "chip ID: Macronix, 1 MiB for a 128 KiB image");
+    command(0x1F0000B7u, 0xF0u, 7u); // B7h 00001FF0h: inside the redirect range
+    const uint32_t redirected = arm9.Read32(0x04100010u);
+    t.Expect(redirected == (image[0x81F0u] | (image[0x81F1u] << 8u) | (image[0x81F2u] << 16u) | (image[0x81F3u] << 24u)),
+        "B7h below 8000h reads 8000h + (addr & 1FFh)");
+    command(0x0F0100B7u, 0xFCu, 1u); // B7h 00010FFCh, 200h bytes: wraps inside the 4 KiB block
+    const uint32_t first = arm9.Read32(0x04100010u);
+    const uint32_t wrapped = arm9.Read32(0x04100010u);
+    t.Expect(first == (image[0x10FFCu] | (image[0x10FFDu] << 8u) | (image[0x10FFEu] << 16u) | (image[0x10FFFu] << 24u)) &&
+            wrapped == (image[0x10000u] | (image[0x10001u] << 8u) | (image[0x10002u] << 16u) | (image[0x10003u] << 24u)),
+        "a B7h stream wraps to the start of its 4 KiB block");
+    for (uint32_t i = 2u; i < 0x80u; ++i) {
+        arm9.Read32(0x04100010u); // finish the block so the next command can start
+    }
+    command(0x000002B7u, 0x00u, 7u); // B7h 02000000h: past the image, mirrors to 0 -> 8000h
+    t.Expect(arm9.Read32(0x04100010u) == (image[0x8000u] | (image[0x8001u] << 8u) | (image[0x8002u] << 16u) | (image[0x8003u] << 24u)),
+        "addresses past the ROM mirror (then redirect)");
+}
+
+void TestIndsBackupMemory(TestContext& t) {
+    const auto dir = MakeTempRoot() / "inds-backup";
+    std::filesystem::create_directories(dir);
+    const auto save = dir / "game.sav";
+    std::filesystem::remove(save);
+    emugbds::inds::Backup backup;
+    std::string error;
+    t.Expect(backup.Load(save, error), "a missing save starts a blank chip");
+    auto session = [&](std::initializer_list<uint8_t> bytes, size_t read_count = 0u) {
+        std::vector<uint8_t> in;
+        for (uint8_t byte : bytes) {
+            backup.Transfer(byte);
+        }
+        for (size_t i = 0u; i < read_count; ++i) {
+            in.push_back(backup.Transfer(0u));
+        }
+        backup.Deselect();
+        return in;
+    };
+    t.Expect(session({0x05u}, 1u)[0] == 0x00u, "status of a blank chip: ready");
+    t.Expect(session({0x03u, 0x12u, 0x34u}, 2u) == std::vector<uint8_t>{0xFFu, 0xFFu}, "a blank chip reads FFh");
+    session({0x06u});
+    t.Expect((session({0x05u}, 1u)[0] & 0x02u) != 0u, "WREN sets the write-enable latch");
+    // 64K EEPROM page write: command, 2 address bytes, 128 data bytes.
+    backup.Transfer(0x02u);
+    backup.Transfer(0x01u);
+    backup.Transfer(0x00u);
+    for (uint32_t i = 0u; i < 128u; ++i) {
+        backup.Transfer(static_cast<uint8_t>(i));
+    }
+    backup.Deselect();
+    t.Expect(backup.address_bytes() == 2u, "a 2-byte address and a 128-byte page mean a 64K EEPROM");
+    t.Expect(session({0x03u, 0x01u, 0x05u}, 2u) == std::vector<uint8_t>{0x05u, 0x06u}, "EEPROM reads back what was written");
+    t.Expect((session({0x05u}, 1u)[0] & 0x02u) == 0u, "a finished write clears the write-enable latch");
+    session({0x02u, 0x01u, 0x05u, 0xAAu}); // no WREN: ignored
+    t.Expect(session({0x03u, 0x01u, 0x05u}, 1u)[0] == 0x05u, "writes without WREN are ignored");
+    session({0x06u});
+    session({0x02u, 0x01u, 0x7Fu, 0xA1u, 0xA2u}); // crosses the 128-byte page end at 017Fh
+    t.Expect(session({0x03u, 0x01u, 0x7Fu}, 1u)[0] == 0xA1u && session({0x03u, 0x01u, 0x00u}, 1u)[0] == 0xA2u,
+        "page writes wrap within the page");
+    t.Expect(backup.Flush(error) && std::filesystem::file_size(save) == 0x10000u, "the save file is written at 64K");
+
+    emugbds::inds::Backup reloaded;
+    t.Expect(reloaded.Load(save, error) && reloaded.address_bytes() == 2u, "the save file size selects the chip type");
+    reloaded.Transfer(0x03u);
+    reloaded.Transfer(0x01u);
+    reloaded.Transfer(0x7Fu);
+    t.Expect(reloaded.Transfer(0u) == 0xA1u, "a reloaded save keeps its contents");
+    reloaded.Deselect();
+
+    emugbds::inds::Backup flash;
+    t.Expect(flash.Load(dir / "flash.sav", error), "blank FLASH chip");
+    flash.Transfer(0xDBu); // page erase is FLASH-only
+    flash.Transfer(0u);
+    flash.Transfer(0u);
+    flash.Transfer(0u);
+    flash.Deselect();
+    t.Expect(flash.address_bytes() == 3u, "FLASH-only commands select 3-byte FLASH");
+    flash.Transfer(0x9Fu);
+    t.Expect(flash.Transfer(0u) == 0x20u, "FLASH answers a JEDEC ID");
+    flash.Deselect();
+}
+
+void TestIndsGeometryAndWifiStubs(TestContext& t) {
+    emugbds::inds::MemoryBus bus;
+    auto& arm9 = bus.arm9();
+    auto& arm7 = bus.arm7();
+    t.Expect((arm9.Read32(0x04000600u) & 0x0E000000u) == 0x06000000u, "GXSTAT: FIFO empty, engine idle");
+    arm9.Write32(0x04000600u, 2u << 30); // FIFO IRQ when empty
+    t.Expect((arm9.Read32(0x04000214u) & (1u << 21)) != 0u, "the geometry FIFO IRQ follows its (always true) condition");
+    arm9.Write32(0x04000214u, 1u << 21);
+    t.Expect((arm9.Read32(0x04000214u) & (1u << 21)) != 0u, "acknowledging a level IRQ while its condition holds has no effect");
+
+    t.Expect(arm7.Read16(0x04808000u) == 0x1440u, "W_ID reads the DS wifi chip ID");
+    arm7.Write16(0x04808158u, 0x6000u); // BB read register 0
+    t.Expect(arm7.Read16(0x0480815Cu) == 0x6Du && arm7.Read16(0x0480815Eu) == 0u, "baseband chip ID, never busy");
+    arm7.Write16(0x0480815Au, 0x42u);
+    arm7.Write16(0x04808158u, 0x5013u); // BB write register 13h
+    arm7.Write16(0x04808158u, 0x6013u);
+    t.Expect(arm7.Read16(0x0480815Cu) == 0x42u, "baseband registers read back");
+    arm7.Write16(0x04804010u, 0xBEEFu);
+    arm7.Write8(0x04804010u, 0x11u);
+    t.Expect(arm7.Read16(0x0480C010u) == 0xBEEFu, "wifi RAM mirrors at 480C000h and ignores STRB");
 }
 
 void TestIndsMathUnit(TestContext& t) {
@@ -2811,6 +2936,10 @@ void TestIndsCoreDirectNdsBoot(TestContext& t) {
     t.Expect(core.nds_header().has_value(), "inds core exposes parsed NDS header");
     t.Expect(core.arm9().r[15] == 0x02000000u, "inds ARM9 PC starts at NDS header entry");
     t.Expect(core.arm7().r[15] == 0x02380000u, "inds ARM7 PC starts at NDS header entry");
+    auto& memory = const_cast<emugbds::inds::MemoryBus&>(core.memory());
+    t.Expect(memory.arm9().Read32(0x027FF800u) == memory.io().card().ChipId() &&
+            memory.arm9().Read16(0x027FFC40u) == 1u,
+        "direct boot leaves the chip ID and boot indicator where the BIOS would");
 
     error.clear();
     t.Expect(core.RunFrame(error), "inds core runs with NDS ROM");
@@ -2937,7 +3066,7 @@ int RunUnitTests() {
         void (*fn)(TestContext&);
     };
 
-    const std::array<NamedTest, 60> tests = {{
+    const std::array<NamedTest, 63> tests = {{
         {"arm_v5_clz_and_saturation", &TestArmV5ClzAndSaturation},
         {"arm_v5_halfword_multiplies", &TestArmV5HalfwordMultiplies},
         {"arm_v5_branches_and_interworking", &TestArmV5BranchesAndInterworking},
@@ -2986,6 +3115,9 @@ int RunUnitTests() {
         {"inds_empty_card_slot", &TestIndsEmptyCardSlot},
         {"inds_spi_devices", &TestIndsSpiDevices},
         {"inds_vram_banking", &TestIndsVramBanking},
+        {"inds_cartridge_reads", &TestIndsCartridgeReads},
+        {"inds_backup_memory", &TestIndsBackupMemory},
+        {"inds_geometry_and_wifi_stubs", &TestIndsGeometryAndWifiStubs},
         {"inds_math_unit", &TestIndsMathUnit},
         {"inds_rtc", &TestIndsRtc},
         {"inds_haltcnt_gba_mode_transition", &TestIndsHaltcntGbaModeTransition},

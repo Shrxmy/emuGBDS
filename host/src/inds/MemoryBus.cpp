@@ -40,6 +40,7 @@ MemoryBus::MemoryBus()
       itcm_(Cp15::kItcmPhysicalSize, 0u),
       dtcm_(Cp15::kDtcmPhysicalSize, 0u) {
     cp15_.Reset();
+    io_.card().AttachRom(&nds_rom_);
     io_.Reset();
 }
 
