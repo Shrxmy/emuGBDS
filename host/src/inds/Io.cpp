@@ -2,6 +2,8 @@
 
 #include "emugbds/inds/MemoryBus.h"
 
+#include <algorithm>
+
 namespace emugbds::inds {
 namespace {
 
@@ -41,12 +43,7 @@ constexpr uint32_t kSoundFirst = 0x04000400u; // ARM7 sound channels, control, b
 constexpr uint32_t kSoundLast = 0x0400051Cu;
 constexpr uint32_t kWifiFirst = 0x04800000u; // ARM7 wireless (registers and Wifi RAM)
 constexpr uint32_t kWifiLast = 0x0480FFFCu;
-constexpr uint32_t kGeometryFirst = 0x04000320u; // ARM9 3D registers, geometry FIFO and command ports
-constexpr uint32_t kGeometryLast = 0x040006A0u;
-constexpr uint32_t kGxStat = 0x04000600u;
 constexpr uint32_t kGxFifoIrq = 1u << 21;
-// shortcut: no 3D engine yet; commands are discarded, so the FIFO always reads empty and idle.
-constexpr uint32_t kGxStatIdle = (1u << 25) | (1u << 26); // FIFO less than half full, empty
 
 constexpr uint16_t kDispStatWritable = 0xFFB8u; // IRQ enables, LYC bit 8, LYC
 constexpr uint16_t kKeysReleased = 0x03FFu;
@@ -79,7 +76,7 @@ void Io::Reset() {
     wifiwaitcnt_ = 0u;
     rcnt_ = 0u;
     held_keys_ = 0u;
-    gx_irq_mode_ = 0u;
+    pumping_geometry_dma_ = false;
     pen_down_ = false;
     vcount_ = 0u;
     arm7_halt_requested_ = false;
@@ -138,8 +135,8 @@ bool Io::ReadWord(int cpu, uint32_t address, uint32_t mask, uint32_t& value) {
         value = wifi_.ReadWord(address - kWifiFirst);
         return true;
     }
-    if (cpu == 0 && address >= kGeometryFirst && address <= kGeometryLast) {
-        value = address == kGxStat ? kGxStatIdle | (static_cast<uint32_t>(gx_irq_mode_) << 30u) : 0u;
+    if (cpu == 0 && address >= Gpu3d::kRegistersFirst && address <= Gpu3d::kRegistersLast) {
+        value = memory_.gpu3d().ReadWord(address);
         return true;
     }
     if (cpu == 1 && address >= kSoundFirst && address <= kSoundLast) {
@@ -253,11 +250,10 @@ bool Io::WriteWord(int cpu, uint32_t address, uint32_t value, uint32_t mask) {
         wifi_.WriteWord(address - kWifiFirst, value, mask);
         return true;
     }
-    if (cpu == 0 && address >= kGeometryFirst && address <= kGeometryLast) {
-        if (address == kGxStat && (mask & 0xC0000000u) != 0u) {
-            gx_irq_mode_ = static_cast<uint8_t>((value >> 30u) & 3u);
-            AssertGeometryIrq();
-        }
+    if (cpu == 0 && address >= Gpu3d::kRegistersFirst && address <= Gpu3d::kRegistersLast) {
+        memory_.gpu3d().WriteWord(address, value, mask);
+        PumpGeometryDma();
+        AssertGeometryIrq();
         return true;
     }
     if (cpu == 1 && address >= kSoundFirst && address <= kSoundLast) {
@@ -390,6 +386,14 @@ void Io::StartLine(uint16_t vcount) {
             TriggerDma(cpu, 1u); // V-Blank DMA on both CPUs
         }
     }
+    Gpu3d& gpu3d = memory_.gpu3d();
+    if (vcount == kVisibleLines) {
+        gpu3d.StartVBlank(); // a pending SWAP_BUFFERS takes effect
+        PumpGeometryDma();
+        AssertGeometryIrq();
+    } else if (vcount == kRenderStartLine) {
+        gpu3d.RenderFrame(memory_.engine(0).disp3dcnt()); // the renderer starts 48 lines before the display
+    }
 }
 
 
@@ -434,6 +438,8 @@ void Io::WriteDma(int cpu, uint32_t channel_index, uint32_t field, uint32_t valu
     channel.internal_count = channel.control & count_bits;
     if (DmaStartMode(cpu, channel.control) == 0u) {
         RunDma(cpu, channel_index);
+    } else if (cpu == 0 && DmaStartMode(cpu, channel.control) == 7u) {
+        PumpGeometryDma();
     } else if (cpu == CardOwner() && DmaStartMode(cpu, channel.control) == (cpu == 0 ? 5u : 2u)) {
         PumpCardDma(); // Card data may already be waiting.
     }
@@ -500,11 +506,44 @@ void Io::PumpCardDma() {
 
 
 void Io::AssertGeometryIrq() noexcept {
-    // The geometry FIFO IRQ is level-triggered: it stays set while its condition holds,
-    // and the (stubbed) FIFO is always empty, which meets both "less than half" and "empty".
-    if (gx_irq_mode_ == 1u || gx_irq_mode_ == 2u) {
+    // The geometry FIFO IRQ is level-triggered: it stays set while its condition holds.
+    const Gpu3d& gpu3d = memory_.gpu3d();
+    const uint32_t mode = gpu3d.irq_mode();
+    if ((mode == 1u && gpu3d.fifo_less_than_half()) || (mode == 2u && gpu3d.fifo_empty())) {
         cpus_[0].iflags |= kGxFifoIrq;
     }
+}
+
+
+void Io::PumpGeometryDma() {
+    if (pumping_geometry_dma_) {
+        return;
+    }
+    pumping_geometry_dma_ = true;
+    Gpu3d& gpu3d = memory_.gpu3d();
+    for (uint32_t index = 0u; index < 4u; ++index) {
+        DmaChannel& channel = cpus_[0].dma[index];
+        while ((channel.control & kDmaEnable) != 0u && DmaStartMode(0, channel.control) == 7u && gpu3d.fifo_less_than_half()) {
+            uint32_t remaining = channel.internal_count == 0u ? 0x200000u : channel.internal_count; // zero means the maximum
+            const uint32_t burst = std::min(remaining, 112u);
+            const uint32_t source_mode = (channel.control >> 23u) & 3u;
+            const int32_t source_step = source_mode == 1u ? -4 : source_mode == 2u ? 0 : 4;
+            for (uint32_t i = 0u; i < burst; ++i) {
+                const uint32_t data = memory_.DmaRead(true, channel.internal_source & ~3u, 4u);
+                memory_.DmaWrite(true, channel.internal_destination & ~3u, data, 4u); // GXFIFO, fixed
+                channel.internal_source += static_cast<uint32_t>(source_step);
+            }
+            remaining -= burst;
+            channel.internal_count = remaining;
+            if (remaining == 0u) {
+                if ((channel.control & (1u << 30)) != 0u) {
+                    cpus_[0].iflags |= 1u << (8u + index);
+                }
+                channel.control &= ~kDmaEnable;
+            }
+        }
+    }
+    pumping_geometry_dma_ = false;
 }
 
 

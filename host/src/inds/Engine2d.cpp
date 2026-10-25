@@ -99,6 +99,7 @@ uint32_t Engine2d::ReadWord(uint32_t offset) const noexcept {
     case 0x0Cu: // BG2CNT, BG3CNT
     case 0x48u: // WININ, WINOUT
     case 0x50u: // BLDCNT, BLDALPHA
+    case 0x60u: // DISP3DCNT
     case 0x64u: // DISPCAPCNT
         return Reg32(offset);
     case 0x6Cu:
@@ -199,13 +200,27 @@ void Engine2d::ComposeLine(uint32_t y, uint32_t control) noexcept {
 
     const uint32_t mode = control & 7u;
     bg_active_ = {};
+    bg0_translucent_ = false;
     for (uint32_t bg = 0u; bg < 4u; ++bg) {
         if ((control & (1u << (8u + bg))) == 0u) {
             continue;
         }
         auto& line = bg_line_[bg];
         if (bg == 0u && engine_ == 0 && ((control & (1u << 3)) != 0u || mode == 6u)) {
-            continue; // 3D layer (not emulated)
+            if (gpu3d_ == nullptr) {
+                continue;
+            }
+            // 3D BG0 scrolls horizontally only, over 512 pixels: the 3D picture, then 256 transparent ones.
+            const uint32_t hofs = Reg16(kBgOfs) & 0x1FFu;
+            for (uint32_t x = 0u; x < kWidth; ++x) {
+                const uint32_t sx = (x + hofs) & 0x1FFu;
+                const uint8_t alpha = sx < kWidth ? gpu3d_->alpha(sx, y) : 0u;
+                line[x] = alpha == 0u ? -1 : static_cast<int32_t>(gpu3d_->color(sx, y) & 0x7FFFu);
+                bg0_alpha_[x] = alpha;
+                bg0_translucent_ = bg0_translucent_ || (alpha != 0u && alpha != 31u);
+            }
+            bg_active_[bg] = true;
+            continue;
         }
         const uint16_t bgcnt = Reg16(kBgCnt + bg * 2u);
         const uint32_t extended = (bgcnt & 0x80u) == 0u ? kAffine16 : (bgcnt & 4u) != 0u ? kBitmapDirect : kBitmap256;
@@ -244,7 +259,7 @@ void Engine2d::ComposeLine(uint32_t y, uint32_t control) noexcept {
     }
     const LineSetup setup = SetupLine(y);
     // Most lines have no windows, colour effects, or semi-transparent OBJs: the top layer is the pixel.
-    const bool plain_compose = !setup.windows && ((setup.bldcnt >> 6u) & 3u) == 0u && !obj_blend_;
+    const bool plain_compose = !setup.windows && ((setup.bldcnt >> 6u) & 3u) == 0u && !obj_blend_ && !bg0_translucent_;
     for (uint32_t x = 0u; x < kWidth; ++x) {
         composed_[x] = plain_compose ? TopColor(x, setup) : Compose(x, setup);
     }
@@ -272,9 +287,14 @@ void Engine2d::CaptureLine(uint32_t y, bool composed) noexcept {
     const uint32_t write_base = ((capture >> 18u) & 3u) * 0x4000u;
     for (uint32_t x = 0u; x < width; ++x) {
         const uint32_t pixel = y * width + x;
-        // Source A is opaque graphics, or the (not emulated, transparent) 3D screen; a line the
-        // engine did not draw (powered off) is transparent too.
-        const uint16_t a = source_a_3d || !composed ? 0u : static_cast<uint16_t>(composed_[x] | 0x8000u);
+        // Source A is the composed graphics (opaque), or the 3D picture with its alpha; a line the
+        // engine did not draw (powered off) is transparent.
+        uint16_t a = 0u;
+        if (source_a_3d) {
+            a = gpu3d_ != nullptr && gpu3d_->alpha(x, y) != 0u ? static_cast<uint16_t>(gpu3d_->color(x, y) | 0x8000u) : 0u;
+        } else if (composed) {
+            a = static_cast<uint16_t>(composed_[x] | 0x8000u);
+        }
         const uint16_t b = source_b_fifo ? 0u : memory_.LcdcBank16(read_bank, (read_base + pixel) & 0xFFFFu);
         uint16_t value = source == 0u ? a : b;
         if (source >= 2u) {
@@ -656,7 +676,13 @@ uint16_t Engine2d::Compose(uint32_t x, const LineSetup& setup) const noexcept {
     const bool effects = (window & 0x20u) != 0u;
     const bool second_target = (bldcnt & (1u << (8u + layers[1]))) != 0u;
     uint16_t color = colors[0];
-    if (layers[0] == kLayerObj && obj.blend && second_target) {
+    const bool translucent_3d = layers[0] == 0u && engine_ == 0 && gpu3d_ != nullptr && bg0_alpha_[x] != 0u &&
+        bg0_alpha_[x] != 31u && ((dispcnt() & (1u << 3)) != 0u || (dispcnt() & 7u) == 6u);
+    if (translucent_3d && second_target) {
+        // The 3D layer blends with its per-pixel alpha (GBATEK "DS 3D Final 2D Output": EVA = A/2, EVB = 16 - A/2).
+        const uint32_t eva = bg0_alpha_[x] / 2u;
+        color = Blend(colors[0], colors[1], eva, 16u - eva);
+    } else if (layers[0] == kLayerObj && obj.blend && second_target) {
         color = obj.alpha != 0u ? Blend(colors[0], colors[1], obj.alpha, 16u - obj.alpha)
                                 : Blend(colors[0], colors[1], setup.eva, setup.evb);
     } else if (effects && (bldcnt & (1u << layers[0])) != 0u) {

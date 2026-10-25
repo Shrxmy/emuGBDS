@@ -16,7 +16,8 @@ namespace emugbds::inds {
 class VideoMemory {
 public:
     static constexpr uint32_t kPageSize = 0x4000u;
-    enum class Area : uint8_t { Lcdc, EngineABg, EngineAObj, EngineBBg, EngineBObj, Arm7, Count };
+    // Texture: the 3D engine's texture image slots 0-3 (512 KiB); TexturePalette: its palette slots (96 KiB).
+    enum class Area : uint8_t { Lcdc, EngineABg, EngineAObj, EngineBBg, EngineBObj, Arm7, Texture, TexturePalette, Count };
 
     VideoMemory();
     void Reset();

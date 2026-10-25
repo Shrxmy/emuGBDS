@@ -11,8 +11,11 @@
   File > Start DS menu boots the real DS menu, which can start either one (the NDS card goes
   through the cartridge's KEY1 encryption stage, as on hardware). Also `--ds-menu` on the
   command line. An empty Slot-2 now reads as empty instead of as a DS Option Pak.
-- DS display capture: games that swap screens every frame to show both screens (e.g. Devil
-  Survivor) no longer strobe between black and white. Their 3D graphics are still missing.
+- DS 3D engine: geometry commands, matrices, lighting, clipping, textures in all formats,
+  toon/highlight shading, translucency, and the rear plane, shown as BG0 and usable by display
+  capture. Games that draw with 3D (e.g. Devil Survivor) now show their graphics. Not yet: fog,
+  edge marking, anti-aliasing, and shadow polygons.
+- DS display capture: games that swap screens every frame to show both screens no longer strobe.
 - Faster: DS 2D rendering, the CPUs' memory access, and (on hybrid CPUs) the emulator stays on
   the performance cores; busy DS menu transitions no longer stall.
 - Lower memory use: exact-size ROM loads, and each core is allocated only when used.

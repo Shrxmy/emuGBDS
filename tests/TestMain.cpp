@@ -7,6 +7,7 @@
 #include "emugbds/inds/Backup.h"
 #include "emugbds/inds/Core.h"
 #include "emugbds/inds/GameCard.h"
+#include "emugbds/inds/Gpu3d.h"
 #include "emugbds/inds/Key1.h"
 #include "emugbds/inds/MemoryBus.h"
 #include "emugbds/ingba/Core.h"
@@ -2936,6 +2937,81 @@ void TestIndsDisplayCapture(TestContext& t) {
     t.Expect(bus.video().LcdcBank16(0u, 100u * 256u + 7u) == 0x9234u, "A+B capture blends by EVA/EVB");
 }
 
+// The 3D engine driven through its registers (GBATEK "DS 3D Video"), with identity matrices so vertex
+// coordinates are clip coordinates.
+void TestIndsGpu3d(TestContext& t) {
+    using emugbds::inds::Gpu3d;
+    emugbds::inds::VideoMemory video;
+    Gpu3d gpu(video);
+    const auto port = [&](uint32_t command, uint32_t value) { gpu.WriteWord(0x04000400u + command * 4u, value, 0xFFFFFFFFu); };
+    const auto vertex = [&](int32_t x, int32_t y, int32_t z) {
+        port(0x23u, (static_cast<uint32_t>(x) & 0xFFFFu) | (static_cast<uint32_t>(y) << 16u));
+        port(0x23u, static_cast<uint32_t>(z) & 0xFFFFu);
+    };
+
+    // Packed commands: MTX_MODE(1), MTX_IDENTITY, MTX_TRANS(1.0, 2.0, 3.0), then their parameters.
+    gpu.WriteWord(0x04000400u, 0x001C1510u, 0xFFFFFFFFu);
+    for (uint32_t value : {1u, 0x1000u, 0x2000u, 0x3000u}) {
+        gpu.WriteWord(0x04000400u, value, 0xFFFFFFFFu);
+    }
+    t.Expect(gpu.ReadWord(0x04000670u) == 0x1000u && gpu.ReadWord(0x04000674u) == 0x2000u && gpu.ReadWord(0x04000678u) == 0x3000u,
+        "packed GXFIFO commands translate the clip matrix");
+    port(0x15u, 0u); // back to identity
+
+    // A blue triangle over the lower middle of the screen, rear plane transparent.
+    gpu.WriteWord(0x04000350u, 0x00000000u, 0xFFFFFFFFu); // CLEAR_COLOR: alpha 0
+    gpu.WriteWord(0x04000354u, 0x7FFFu, 0x0000FFFFu);     // CLEAR_DEPTH: far
+    port(0x29u, 0x001F00C0u);                               // POLYGON_ATTR: solid, both sides
+    port(0x40u, 0u);                                        // BEGIN_VTXS: triangles
+    port(0x20u, 0x7C00u);                                   // COLOR: blue
+    vertex(-0x1000, -0x1000, 0);
+    vertex(0x1000, -0x1000, 0);
+    vertex(0, 0x1000, 0);
+    port(0x50u, 0u); // SWAP_BUFFERS
+    t.Expect((gpu.ReadWord(0x04000600u) & (1u << 27)) != 0u, "SWAP_BUFFERS keeps the geometry engine busy until V-Blank");
+    port(0x20u, 0x001Fu); // queued behind the swap
+    t.Expect(((gpu.ReadWord(0x04000600u) >> 16u) & 0x1FFu) == 1u, "commands after a pending swap wait in the FIFO");
+    gpu.StartVBlank();
+    t.Expect((gpu.ReadWord(0x04000600u) & ((1u << 27) | (1u << 26))) == (1u << 26), "the swap at V-Blank lets the FIFO drain");
+    gpu.RenderFrame(0u);
+    t.Expect(gpu.alpha(128u, 150u) == 31u && gpu.color(128u, 150u) == 0x7C00u, "the triangle is drawn in its colour");
+    t.Expect(gpu.alpha(4u, 4u) == 0u, "outside the triangle the rear plane shows (transparent)");
+
+    // A quad textured from texture slot 0 (bank A): 8x8 direct-colour green, modulated by white.
+    video.SetBankControl(0u, 0x80u); // LCDC, to fill it
+    uint8_t* texels = video.CpuPointer(true, 0x06800000u);
+    for (uint32_t i = 0u; i < 64u; ++i) {
+        texels[i * 2u] = 0xE0u; // 83E0h: green, opaque
+        texels[i * 2u + 1u] = 0x83u;
+    }
+    video.SetBankControl(0u, 0x83u); // texture image slot 0
+    port(0x2Au, (7u << 26) | (1u << 16) | (1u << 17)); // TEXIMAGE_PARAM: direct colour, 8x8, repeat
+    port(0x40u, 1u);                                     // quads
+    port(0x20u, 0x7FFFu);                                // white
+    port(0x22u, 0u);
+    vertex(-0x1000, -0x1000, 0);
+    port(0x22u, 0x80u);
+    vertex(0x1000, -0x1000, 0);
+    port(0x22u, 0x00800080u);
+    vertex(0x1000, 0x1000, 0);
+    port(0x22u, 0x00800000u);
+    vertex(-0x1000, 0x1000, 0);
+    port(0x50u, 0u);
+    gpu.StartVBlank();
+    gpu.RenderFrame(1u); // DISP3DCNT: texture mapping on
+    t.Expect(gpu.color(10u, 10u) == 0x03E0u && gpu.alpha(10u, 10u) == 31u, "a direct-colour texture modulates to its own colour");
+
+    // BOX_TEST: a box inside the view volume, then one entirely outside it.
+    port(0x70u, (0xF800u) | (0xF800u << 16u));
+    port(0x70u, 0xF800u | (0x1000u << 16u));
+    port(0x70u, 0x1000u | (0x1000u << 16u));
+    t.Expect((gpu.ReadWord(0x04000600u) & 2u) != 0u, "a box inside the view volume passes the box test");
+    port(0x70u, 0x2000u | (0x2000u << 16u));
+    port(0x70u, 0x2000u | (0x0800u << 16u));
+    port(0x70u, 0x0800u | (0x0800u << 16u));
+    t.Expect((gpu.ReadWord(0x04000600u) & 2u) == 0u, "a box outside the view volume fails it");
+}
+
 void TestIndsBackupMemory(TestContext& t) {
     const auto dir = MakeTempRoot() / "inds-backup";
     std::filesystem::create_directories(dir);
@@ -3844,7 +3920,7 @@ int RunUnitTests() {
         void (*fn)(TestContext&);
     };
 
-    const std::array<NamedTest, 72> tests = {{
+    const std::array<NamedTest, 73> tests = {{
         {"frontend_settings", &TestFrontendSettings},
         {"arm_v5_clz_and_saturation", &TestArmV5ClzAndSaturation},
         {"arm_v5_halfword_multiplies", &TestArmV5HalfwordMultiplies},
@@ -3901,6 +3977,7 @@ int RunUnitTests() {
         {"inds_cartridge_reads", &TestIndsCartridgeReads},
         {"inds_card_key1_boot", &TestIndsCardKey1Boot},
         {"inds_display_capture", &TestIndsDisplayCapture},
+        {"inds_gpu3d", &TestIndsGpu3d},
         {"inds_backup_memory", &TestIndsBackupMemory},
         {"inds_geometry_and_wifi_stubs", &TestIndsGeometryAndWifiStubs},
         {"inds_sound", &TestIndsSound},

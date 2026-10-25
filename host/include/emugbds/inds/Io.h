@@ -29,6 +29,7 @@ public:
     static constexpr uint32_t kIrqVCount = 1u << 2;
     static constexpr uint16_t kVisibleLines = 192u;
     static constexpr uint16_t kTotalLines = 263u;
+    static constexpr uint16_t kRenderStartLine = 214u; // the 3D renderer starts on the next frame here
 
     explicit Io(MemoryBus& memory) noexcept : memory_(memory) {}
     Io(const Io&) = delete;
@@ -118,6 +119,8 @@ private:
     void PumpCardDma();
     uint16_t ExtKeys() const noexcept;
     void AssertGeometryIrq() noexcept;
+    // Geometry command DMA (ARM9 start mode 7): 112-word bursts while the FIFO is less than half full.
+    void PumpGeometryDma();
     void RaiseCardIrq() noexcept;
 
     MemoryBus& memory_;
@@ -135,7 +138,7 @@ private:
     uint16_t rcnt_ = 0; // ARM7 RCNT, stored only (no serial port)
     uint32_t held_keys_ = 0;
     bool pen_down_ = false;
-    uint8_t gx_irq_mode_ = 0; // GXSTAT bits 30-31
+    bool pumping_geometry_dma_ = false; // its writes to GXFIFO come back through WriteWord
     uint16_t vcount_ = 0;
     bool arm7_halt_requested_ = false;
     bool gba_mode_requested_ = false;

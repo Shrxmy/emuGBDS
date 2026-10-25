@@ -6,6 +6,7 @@
 #include "emugbds/arm/Bus.h"
 #include "emugbds/inds/Cp15.h"
 #include "emugbds/inds/Engine2d.h"
+#include "emugbds/inds/Gpu3d.h"
 #include "emugbds/inds/Io.h"
 #include "emugbds/inds/VideoMemory.h"
 #include "emugbds/ingba/Backup.h"
@@ -95,6 +96,7 @@ public:
     void RefreshCpuMaps();
     const Cp15& cp15() const noexcept { return cp15_; }
     VideoMemory& video() noexcept { return video_; }
+    Gpu3d& gpu3d() noexcept { return gpu3d_; }
     const VideoMemory& video() const noexcept { return video_; }
     Engine2d& engine(int index) noexcept { return engines_[index]; }
     Io& io() noexcept { return io_; }
@@ -219,7 +221,8 @@ private:
     TcmWindows tcm_{};
     std::array<std::array<DirectRegion, 256>, 2> direct_{}; // ARM9, ARM7; by address bits 24-31
     VideoMemory video_{};
-    std::array<Engine2d, 2> engines_{Engine2d{video_, 0}, Engine2d{video_, 1}};
+    Gpu3d gpu3d_{video_};
+    std::array<Engine2d, 2> engines_{Engine2d{video_, 0, &gpu3d_}, Engine2d{video_, 1, nullptr}};
     Io io_{*this};
     View arm9_view_{*this, true};
     View arm7_view_{*this, false};

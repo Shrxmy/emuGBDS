@@ -127,6 +127,7 @@ void MemoryBus::ResetMemory() {
     cp15_.Reset();
     RefreshCpuMaps();
     video_.Reset();
+    gpu3d_.Reset();
     for (Engine2d& engine : engines_) {
         engine.Reset();
     }

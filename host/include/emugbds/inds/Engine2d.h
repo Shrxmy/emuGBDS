@@ -4,9 +4,10 @@
 // a scanline renderer for text, affine, extended affine and bitmap BGs, OBJs,
 // windows, blending, and master brightness (GBATEK "DS Video").
 // Engine A also has the display capture unit (DISPCAPCNT, GBATEK "DS Video Capture").
-// shortcut: no mosaic, no 3D (BG0 in 3D mode and the 3D capture source are transparent),
-// and main-memory display mode (and its capture source) shows black.
+// Engine A shows the 3D engine's picture as BG0 when DISPCNT selects it.
+// shortcut: no mosaic, and main-memory display mode (and its capture source) shows black.
 
+#include "emugbds/inds/Gpu3d.h"
 #include "emugbds/inds/VideoMemory.h"
 
 #include <array>
@@ -23,7 +24,9 @@ public:
     static constexpr uint32_t kHeight = 192u;
     static constexpr uint32_t kRegisterBytes = 0x70u;
 
-    Engine2d(VideoMemory& memory, int engine) noexcept : memory_(memory), engine_(engine) {}
+    // `gpu3d` is the 3D engine whose picture engine A shows as BG0 (nullptr for engine B).
+    Engine2d(VideoMemory& memory, int engine, const Gpu3d* gpu3d) noexcept : memory_(memory), engine_(engine), gpu3d_(gpu3d) {}
+    uint16_t disp3dcnt() const noexcept { return Reg16(0x60u); }
     void Reset() noexcept;
     // offset = address - engine base (word aligned); mask selects byte lanes.
     uint32_t ReadWord(uint32_t offset) const noexcept;
@@ -81,6 +84,7 @@ private:
 
     VideoMemory& memory_;
     int engine_;
+    const Gpu3d* gpu3d_;
     uint8_t hidden_layers_ = 0;
     std::array<uint8_t, kRegisterBytes> regs_{};
     std::array<int32_t, 2> ref_x_{}; // BG2/BG3 internal affine reference points
@@ -90,6 +94,8 @@ private:
     std::array<ObjPixel, kWidth> obj_line_{};
     std::array<bool, kWidth> obj_window_{};
     bool obj_blend_ = false; // a semi-transparent or bitmap OBJ was drawn on this line
+    std::array<uint8_t, kWidth> bg0_alpha_{}; // 3D BG0: per-pixel alpha (31 = opaque)
+    bool bg0_translucent_ = false;            // a 3D pixel on this line is translucent
     std::array<uint16_t, kWidth> composed_{};
     bool capturing_ = false; // a capture started at line 0 of this frame
 };

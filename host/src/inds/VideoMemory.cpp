@@ -15,7 +15,7 @@ constexpr std::array<uint32_t, 9> kLcdcOffset = {
 // MST bits each bank decodes (A, B, H, I ignore bit 2).
 constexpr std::array<uint8_t, 9> kMstMask = {3u, 3u, 7u, 7u, 7u, 7u, 7u, 3u, 3u};
 // Pages per area; CPU addresses mirror within it.
-constexpr std::array<uint32_t, 6> kAreaPages = {41u, 32u, 16u, 8u, 8u, 16u};
+constexpr std::array<uint32_t, 8> kAreaPages = {41u, 32u, 16u, 8u, 8u, 16u, 32u, 6u};
 constexpr uint32_t kExtSlotSize = 0x2000u;
 
 } // namespace
@@ -115,10 +115,15 @@ void VideoMemory::Remap() {
             }
             break;
         case 3u:
-            if (bank == I) {
+            if (bank <= D) {
+                MapPages(Area::Texture, ofs * 8u, bank); // texture image slot OFS
+            } else if (bank == E) {
+                MapPages(Area::TexturePalette, 0u, bank); // palette slots 0-3
+            } else if (bank == F || bank == G) {
+                MapPages(Area::TexturePalette, small_ofs, bank); // palette slot OFS.0 + OFS.1 * 4
+            } else if (bank == I) {
                 obj_ext_[1] = data;
             }
-            // shortcut: texture image/palette slots (A-G) wait for the 3D engine.
             break;
         case 4u:
             if (bank == C) {
