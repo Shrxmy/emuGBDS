@@ -3,6 +3,7 @@
 #include "emugbds/arm/Bus.h"
 #include "emugbds/ingba/Apu.h"
 #include "emugbds/ingba/Backup.h"
+#include "emugbds/ingba/CartRtc.h"
 
 #include <array>
 #include <cstdint>
@@ -64,6 +65,10 @@ private:
     const uint8_t* DirectReadPointer(uint32_t address, uint32_t size) const noexcept;
     // An EEPROM sits in the top of the ROM area: all of D000000h-DFFFFFFh for ROMs up to 16 MiB,
     // else DFFFF00h-DFFFFFFh (GBATEK "GBA Cart Backup EEPROM").
+    // GPIO registers at 80000C4h-80000C9h; reads reach them only in read/write mode (control bit 0).
+    static bool InGpio(uint32_t address) noexcept { return address - 0x080000C4u < 6u; }
+    uint8_t ReadGpio(uint32_t address) const noexcept;
+    void WriteGpio(uint32_t address, uint16_t value) noexcept;
     bool InEepromWindow(uint32_t address) const noexcept {
         return backup_.type() == BackupType::Eeprom && (address >> 24u) == 0x0Du &&
             (rom_.size() <= 0x01000000u || address >= 0x0DFFFF00u);
@@ -79,6 +84,11 @@ private:
     std::vector<uint8_t> rom_;
     // EEPROM reads shift the chip's serial output, so const reads may change it.
     mutable Backup backup_{};
+    // shortcut: every cartridge gets the GPIO port with an RTC; games without one never enable it.
+    CartRtc rtc_{};
+    uint8_t gpio_data_ = 0u;      // 80000C4h, as written
+    uint8_t gpio_direction_ = 0u; // 80000C6h: 1 = output from the GBA
+    uint8_t gpio_control_ = 0u;   // 80000C8h: bit 0 = registers readable
     std::array<uint8_t, kPaletteSize> palette_{};
     std::array<uint8_t, kVramSize> vram_{};
     std::array<uint8_t, kOamSize> oam_{};

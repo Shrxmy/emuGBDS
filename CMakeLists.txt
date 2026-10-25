@@ -77,6 +77,7 @@ set(EMUGBDS_INHOUSE_GBA_SOURCES
     host/src/ingba/Video.cpp
     host/src/ingba/Apu.cpp
     host/src/ingba/Backup.cpp
+    host/src/ingba/CartRtc.cpp
 )
 
 # Shared by both cores.

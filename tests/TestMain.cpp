@@ -16,6 +16,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -469,6 +470,68 @@ void TestIngbaBackup(TestContext& t) {
     error.clear();
     t.Expect(!keep.LoadRom(dir / "oversize.gba", error) && keep.backup().type() == BackupType::Sram &&
         keep.Read8(0x0E000010u) == 0x42u, "a refused save file does not replace the running game's save");
+}
+
+void TestIngbaCartRtc(TestContext& t) {
+    const auto dir = MakeTempRoot() / "ingba-rtc";
+    std::filesystem::create_directories(dir);
+    std::vector<uint8_t> rom = BuildSyntheticGbaRom();
+    rom[0xC4u] = 0x5Au;
+    WriteFile(dir / "rtc.gba", rom);
+    emugbds::ingba::MemoryBus bus;
+    std::string error;
+    t.Expect(bus.LoadRom(dir / "rtc.gba", error), "RTC test ROM loads");
+    t.Expect(bus.Read8(0x080000C4u) == 0x5Au && bus.Read16(0x080000C4u) == (rom[0xC4u] | (rom[0xC5u] << 8u)),
+        "the GPIO port is write-only until enabled, so ROM data shows through");
+
+    constexpr uint32_t kData = 0x080000C4u;
+    constexpr uint16_t kSck = 1u, kSio = 2u, kCs = 4u;
+    bus.Write16(0x080000C8u, 1u); // registers readable
+    bus.Write16(0x080000C6u, 7u); // SCK, SIO, CS driven by the GBA
+    t.Expect(bus.Read16(0x080000C8u) == 1u && bus.Read16(0x080000C6u) == 7u, "GPIO direction and control read back");
+    // One RTC transfer: CS goes high, the command goes out LSB first, then `count` bytes come back.
+    const auto transfer = [&](uint8_t command, uint32_t count) {
+        std::vector<uint8_t> bytes;
+        bus.Write16(0x080000C6u, 7u);
+        bus.Write16(kData, kSck);
+        bus.Write16(kData, kCs | kSck);
+        for (uint32_t i = 0u; i < 8u; ++i) {
+            const uint16_t sio = ((command >> i) & 1u) != 0u ? kSio : 0u;
+            bus.Write16(kData, kCs | sio);
+            bus.Write16(kData, kCs | kSck | sio);
+        }
+        bus.Write16(0x080000C6u, 5u); // SIO becomes an input
+        for (uint32_t n = 0u; n < count; ++n) {
+            uint8_t byte = 0u;
+            for (uint32_t i = 0u; i < 8u; ++i) {
+                bus.Write16(kData, kCs);
+                bus.Write16(kData, kCs | kSck);
+                byte = static_cast<uint8_t>(byte | (((bus.Read16(kData) & kSio) != 0u ? 1u : 0u) << i));
+            }
+            bytes.push_back(byte);
+        }
+        bus.Write16(0x080000C6u, 7u);
+        bus.Write16(kData, kSck); // CS low ends the command
+        return bytes;
+    };
+    const auto bcd_ok = [](uint8_t value, int max) {
+        return (value & 0x0Fu) <= 9u && (value >> 4u) <= 9u && ((value >> 4u) * 10 + (value & 0x0Fu)) <= max;
+    };
+    t.Expect(transfer(0xC6u, 1u) == std::vector<uint8_t>{0x40u}, "control reads 24-hour mode with no power-off flag");
+    // 65h sent MSB first, as GBA games do, is the date/time read command.
+    std::vector<uint8_t> date = transfer(0xA6u, 7u);
+    const std::time_t now = std::time(nullptr);
+    const std::tm local = *std::localtime(&now);
+    t.Expect(date.size() == 7u && date[0] == (((local.tm_year % 100) / 10) << 4 | (local.tm_year % 10)) &&
+        bcd_ok(date[1], 12) && date[1] != 0u && bcd_ok(date[2], 31) && date[3] <= 6u &&
+        bcd_ok(date[4] & 0x3Fu, 23) && bcd_ok(date[5], 59) && bcd_ok(date[6], 59),
+        "date and time come back as BCD from the host clock");
+    t.Expect(((date[4] & 0x80u) != 0u) == (local.tm_hour >= 12), "the GBA RTC puts the PM flag in hour bit 7");
+    transfer(0x06u, 0u); // force reset
+    t.Expect(transfer(0xC6u, 1u) == std::vector<uint8_t>{0x00u}, "force reset clears the control register");
+    std::vector<uint8_t> time = transfer(0xE6u, 3u);
+    t.Expect(time.size() == 3u && bcd_ok(time[0] & 0x3Fu, 11), "12-hour mode reports hours 00-11");
+    t.Expect(transfer(0x96u, 1u) == std::vector<uint8_t>{0xFFu}, "the alarm register reads FFh");
 }
 
 void TestIngbaMemoryBus(TestContext& t) {
@@ -3407,7 +3470,7 @@ int RunUnitTests() {
         void (*fn)(TestContext&);
     };
 
-    const std::array<NamedTest, 66> tests = {{
+    const std::array<NamedTest, 67> tests = {{
         {"frontend_settings", &TestFrontendSettings},
         {"arm_v5_clz_and_saturation", &TestArmV5ClzAndSaturation},
         {"arm_v5_halfword_multiplies", &TestArmV5HalfwordMultiplies},
@@ -3416,6 +3479,7 @@ int RunUnitTests() {
         {"arm_v5_coprocessor_transfers", &TestArmV5CoprocessorTransfers},
         {"ingba_memory_bus", &TestIngbaMemoryBus},
         {"ingba_backup", &TestIngbaBackup},
+        {"ingba_cart_rtc", &TestIngbaCartRtc},
         {"ingba_core_run_frame", &TestIngbaCoreRunFrame},
         {"ingba_cpu_fiq_banking", &TestIngbaCpuFiqBanking},
         {"ingba_fiq_user_bank_transfers", &TestIngbaFiqUserBankTransfers},

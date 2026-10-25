@@ -49,6 +49,10 @@ bool MemoryBus::LoadRom(const std::filesystem::path& rom_path, std::string& erro
     }
     backup_ = std::move(backup);
     rom_ = std::move(rom_image);
+    rtc_.Reset();
+    gpio_data_ = 0u;
+    gpio_direction_ = 0u;
+    gpio_control_ = 0u;
     apu_.Reset();
     if (ewram_.empty()) {
         ewram_.assign(kEwramSize, 0);
@@ -456,6 +460,9 @@ uint8_t MemoryBus::Read8(uint32_t address) const {
     if (InEepromWindow(address)) {
         return static_cast<uint8_t>(backup_.ReadEepromBit());
     }
+    if (InGpio(address) && (gpio_control_ & 1u) != 0u) {
+        return ReadGpio(address);
+    }
     if (address >= kRomBase && address < kSaveBase && !rom_.empty()) {
         const uint32_t rom_offset = (address - kRomBase) % static_cast<uint32_t>(rom_.size());
         return rom_[rom_offset];
@@ -480,6 +487,9 @@ const uint8_t* MemoryBus::DirectReadPointer(uint32_t address, uint32_t size) con
         }
         return offset + size <= bytes.size() ? bytes.data() + offset : nullptr;
     };
+    if ((gpio_control_ & 1u) != 0u && address - 0x080000C0u < 0x10u) {
+        return nullptr; // the readable GPIO registers sit inside this ROM block
+    }
     switch (address >> 24u) {
     case 0x02u:
         return mirrored(ewram_, kEwramBase);
@@ -498,6 +508,32 @@ const uint8_t* MemoryBus::DirectReadPointer(uint32_t address, uint32_t size) con
     default:
         return nullptr;
     }
+}
+
+
+// GBATEK "GBA Cart I/O Port (GPIO)": input bits of the data register come from the device (the RTC drives SIO).
+uint8_t MemoryBus::ReadGpio(uint32_t address) const noexcept {
+    if ((address & 1u) != 0u) {
+        return 0u; // bits 4-15 read as zero
+    }
+    switch (address - 0x080000C4u) {
+    case 0u: {
+        const uint8_t from_rtc = rtc_.sio() ? CartRtc::kSio : 0u;
+        return static_cast<uint8_t>(((gpio_data_ & gpio_direction_) | (from_rtc & ~gpio_direction_)) & 0x0Fu);
+    }
+    case 2u: return gpio_direction_;
+    default: return gpio_control_;
+    }
+}
+
+
+void MemoryBus::WriteGpio(uint32_t address, uint16_t value) noexcept {
+    switch (address - 0x080000C4u) {
+    case 0u: gpio_data_ = static_cast<uint8_t>(value & 0x0Fu); break;
+    case 2u: gpio_direction_ = static_cast<uint8_t>(value & 0x0Fu); break;
+    default: gpio_control_ = static_cast<uint8_t>(value & 1u); return;
+    }
+    rtc_.WritePins(static_cast<uint8_t>(gpio_data_ & gpio_direction_)); // only driven lines reach the RTC
 }
 
 
@@ -680,6 +716,10 @@ void MemoryBus::Write16(uint32_t address, uint16_t value) {
     }
     if (InEepromWindow(address)) {
         backup_.WriteEepromBit(value);
+        return;
+    }
+    if (InGpio(address)) {
+        WriteGpio(address, value); // the port takes 16/32-bit stores only (GBATEK)
         return;
     }
     if (address >= kSaveBase && address < kSaveEnd) {
