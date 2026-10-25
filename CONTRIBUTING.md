@@ -34,10 +34,3 @@ cmake --preset msvc-release
 cmake --build --preset build-msvc-release
 .\build\Release\emugbds.exe --help
 ```
-
-For NDS work (requires Clang/ClangCL toolchain support):
-
-```powershell
-cmake --preset nds-clang-release
-cmake --build --preset build-nds-clang-release
-```

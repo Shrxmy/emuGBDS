@@ -11,7 +11,6 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-option(EMUGBDS_ENABLE_MELONDS "Build with melonDS core adapter support" OFF)
 include(CTest)
 
 # Whole-program optimization for Release: the CPU interpreter's hot paths (bus reads, cycle
@@ -54,26 +53,6 @@ if(SDL2_FOUND)
     set(EMUGBDS_HAS_SDL2_DEFAULT ON)
 else()
     set(EMUGBDS_HAS_SDL2_DEFAULT OFF)
-endif()
-
-set(EMUGBDS_BUILD_WITH_MELONDS OFF)
-if(EMUGBDS_ENABLE_MELONDS)
-    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/melonDS-master")
-        message(WARNING "EMUGBDS_ENABLE_MELONDS=ON but melonDS-master directory is missing; DS third-party integration will be disabled.")
-    else()
-        set(ENABLE_JIT OFF CACHE BOOL "" FORCE)
-        set(ENABLE_GDBSTUB OFF CACHE BOOL "" FORCE)
-        set(ENABLE_OGLRENDERER OFF CACHE BOOL "" FORCE)
-        set(BUILD_QT_SDL OFF CACHE BOOL "" FORCE)
-        set(DIRENT_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/host/third_party/dirent" CACHE PATH "" FORCE)
-        add_subdirectory(melonDS-master EXCLUDE_FROM_ALL)
-        if(TARGET core)
-            set_target_properties(core PROPERTIES
-                CXX_STANDARD 20
-                CXX_STANDARD_REQUIRED ON)
-        endif()
-        set(EMUGBDS_BUILD_WITH_MELONDS ON)
-    endif()
 endif()
 
 # Keep core implementation units in one place so the application and tests
@@ -144,24 +123,10 @@ add_executable(emugbds
     host/src/cores/InHouseGbaCoreAdapter.cpp
 )
 
-if(EMUGBDS_BUILD_WITH_MELONDS)
-    target_sources(emugbds PRIVATE
-        host/src/cores/MelonDsCoreAdapter.cpp
-        host/src/nds/NdsPlatformShim.cpp
-    )
-endif()
-
 target_include_directories(emugbds PRIVATE host/include)
 target_compile_definitions(emugbds PRIVATE EMUGBDS_VERSION="${PROJECT_VERSION}")
 if(WIN32)
     target_sources(emugbds PRIVATE host/src/app.rc) # application icon
-endif()
-
-if(EMUGBDS_BUILD_WITH_MELONDS)
-    target_compile_definitions(emugbds PRIVATE EMUGBDS_HAS_MELONDS=1)
-    target_link_libraries(emugbds PRIVATE core)
-else()
-    target_compile_definitions(emugbds PRIVATE EMUGBDS_HAS_MELONDS=0)
 endif()
 
 if(SDL2_FOUND)
@@ -213,7 +178,7 @@ if(BUILD_TESTING)
         host/src/nds/NdsCartridgeHeader.cpp
     )
     target_include_directories(emugbds_tests PRIVATE host/include)
-    target_compile_definitions(emugbds_tests PRIVATE EMUGBDS_HAS_MELONDS=0 EMUGBDS_HAS_SDL2=0)
+    target_compile_definitions(emugbds_tests PRIVATE EMUGBDS_HAS_SDL2=0)
     if(WIN32)
         target_compile_definitions(emugbds_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
     endif()

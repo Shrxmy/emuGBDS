@@ -8,22 +8,11 @@
   "configurePresets": [
     {
       "name": "msvc-release",
-      "displayName": "MSVC Release (In-House Core)",
+      "displayName": "MSVC Release",
       "generator": "Visual Studio 17 2022",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "EMUGBDS_ENABLE_MELONDS": "OFF"
-      }
-    },
-    {
-      "name": "nds-clang-release",
-      "displayName": "Clang Release (NDS Third-Party Core)",
-      "generator": "Visual Studio 17 2022",
-      "toolset": "ClangCL",
-      "binaryDir": "${sourceDir}/build-clang-vs",
-      "cacheVariables": {
-        "EMUGBDS_ENABLE_MELONDS": "ON"
+        "CMAKE_BUILD_TYPE": "Release"
       }
     }
   ],
@@ -35,14 +24,6 @@
       "targets": [
         "emugbds",
         "emugbds_tests"
-      ]
-    },
-    {
-      "name": "build-nds-clang-release",
-      "configurePreset": "nds-clang-release",
-      "configuration": "Release",
-      "targets": [
-        "emugbds"
       ]
     }
   ]

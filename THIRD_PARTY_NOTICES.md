@@ -20,14 +20,6 @@ This repository contains third-party source trees. Their original licenses and n
 - Upstream: https://github.com/ocornut/imgui
 - License: MIT (see `host/third_party/imgui/LICENSE.txt`)
 
-## Optional External Integrations (Not Vendored)
-
-1. melonDS
-- Optional local path: `melonDS-master/`
-- Upstream: https://github.com/melonDS-emu/melonDS
-- License: GPL-3.0-or-later (see upstream `LICENSE`)
-- A build with `EMUGBDS_ENABLE_MELONDS=ON` links melonDS, so that combined binary must be distributed under GPL-3.0-or-later.
-
 ## Project-Owned Code
 
 Project-owned code currently lives primarily under `host/` and top-level project configuration files.
