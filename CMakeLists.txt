@@ -1,7 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
 
 # The one place the version lives: shown by --version, the window title, and Help > About.
-project(emuGBDS VERSION 0.1.0 LANGUAGES C CXX)
+project(emuGBDS VERSION 0.2.0 LANGUAGES C CXX)
+
+# Link the C runtime statically so the released exe runs without the VC++ redistributable.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -220,3 +223,16 @@ if(BUILD_TESTING)
         FIXTURES_REQUIRED EMUGBDS_CLI_FIXTURES
         PASS_REGULAR_EXPRESSION "Completed 3 frame\\(s\\) in mode GBA\\.")
 endif()
+
+# Release package: cpack -G ZIP -C Release --config build/CPackConfig.cmake
+install(TARGETS emugbds RUNTIME DESTINATION .)
+install(FILES README.md LICENSE THIRD_PARTY_NOTICES.md CHANGELOG.md DESTINATION .)
+install(FILES host/third_party/imgui/LICENSE.txt DESTINATION licenses RENAME imgui-LICENSE.txt)
+if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/sdl/SDL2.dll")
+    install(FILES sdl/SDL2.dll DESTINATION .)
+    install(FILES sdl/LICENSE.txt DESTINATION licenses RENAME SDL2-LICENSE.txt)
+endif()
+set(CPACK_PACKAGE_FILE_NAME "emuGBDS-${PROJECT_VERSION}-windows-x64")
+set(CPACK_GENERATOR ZIP)
+set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)
+include(CPack)
