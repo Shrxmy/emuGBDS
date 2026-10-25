@@ -279,6 +279,9 @@ bool RuntimeKernel::SwitchToGbaFromSlot2(std::string& error) {
         return false;
     }
     active_core_ = gba_core_.get();
+    if (ds_core_) {
+        ds_core_->Shutdown(); // the console is a GBA now: free the DS side (its saves were written at the handoff)
+    }
     std::cout << "[runtime] switched active core to GBA using Slot-2 ROM '"
               << slot2_rom_path_->string() << "' at frame " << frame_index_ << ".\n";
     return true;

@@ -5,6 +5,33 @@
 
 namespace emugbds::core {
 
+bool ReadWholeFile(const std::filesystem::path& path, std::vector<uint8_t>& out_bytes, std::string& error,
+                   size_t round_to) {
+    std::error_code size_error;
+    const uintmax_t size = std::filesystem::file_size(path, size_error);
+    if (size_error) {
+        error = "Failed to open file: " + path.string();
+        return false;
+    }
+    if (size == 0u) {
+        error = "File is empty: " + path.string();
+        return false;
+    }
+    std::ifstream input(path, std::ios::binary);
+    if (!input.is_open()) {
+        error = "Failed to open file: " + path.string();
+        return false;
+    }
+    std::vector<uint8_t> bytes((static_cast<size_t>(size) + round_to - 1u) / round_to * round_to, 0u);
+    if (!input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(size))) {
+        error = "Failed to read file: " + path.string();
+        return false;
+    }
+    out_bytes = std::move(bytes); // the old contents are freed here, not kept alongside
+    return true;
+}
+
+
 bool WriteFileReplacing(const std::filesystem::path& path, const std::vector<uint8_t>& bytes, std::string& error) {
     std::filesystem::path temporary = path;
     temporary += ".tmp";

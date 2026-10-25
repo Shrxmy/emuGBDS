@@ -29,11 +29,16 @@ public:
 
     // Read-only view for bring-up diagnostics.
     const inds::Core& core() const noexcept { return *core_; }
-    void SetHiddenLayers(int engine, uint8_t mask) noexcept { core_->SetHiddenLayers(engine, mask); }
+    void SetHiddenLayers(int engine, uint8_t mask) noexcept {
+        if (core_) {
+            core_->SetHiddenLayers(engine, mask);
+        }
+    }
 
 private:
     // Heap-owned: the core is large and its CPUs are bound to its own buses, so Initialize replaces it.
-    std::unique_ptr<inds::Core> core_ = std::make_unique<inds::Core>();
+    // Allocated by Initialize and freed by Shutdown, so an unused DS core costs nothing.
+    std::unique_ptr<inds::Core> core_;
     bool configured_ = false;
     bool initialized_ = false;
     bool primary_loaded_ = false;

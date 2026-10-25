@@ -115,6 +115,7 @@ void InHouseDsCoreAdapter::Shutdown() noexcept {
     if (initialized_ && !core_->FlushSave(error)) {
         std::cerr << "[inds] " << error << "\n";
     }
+    core_.reset(); // frees the ROM image and the console's memory
     configured_ = false;
     initialized_ = false;
     primary_loaded_ = false;
@@ -141,6 +142,9 @@ bool InHouseDsCoreAdapter::SetSecondaryRom(const std::filesystem::path& rom_path
 
 void InHouseDsCoreAdapter::ApplyInput(const runtime::InputSnapshot& input) noexcept {
     held_keys_ = (held_keys_ | input.gba_press_mask) & ~input.gba_release_mask;
+    if (!core_) {
+        return;
+    }
     core_->SetKeys(held_keys_);
     core_->SetTouch(input.touch_down, input.touch_x, input.touch_y);
 }
@@ -171,7 +175,7 @@ bool InHouseDsCoreAdapter::GetAudioChunk(runtime::AudioChunk& out_chunk) const n
 
 
 std::optional<core::TransitionEvent> InHouseDsCoreAdapter::PollTransition() {
-    return core_->PollTransition();
+    return core_ ? core_->PollTransition() : std::nullopt;
 }
 
 } // namespace emugbds::cores

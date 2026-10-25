@@ -42,11 +42,16 @@ public:
     uint64_t dispcnt_write_count() const noexcept { return core_->dispcnt_write_count(); }
     uint16_t last_dispcnt_written() const noexcept { return core_->last_dispcnt_written(); }
     const ingba::Core& core() const noexcept { return *core_; }
-    void SetHiddenLayers(uint8_t mask) noexcept { core_->set_hidden_layers(mask); }
+    void SetHiddenLayers(uint8_t mask) noexcept {
+        if (core_) {
+            core_->set_hidden_layers(mask);
+        }
+    }
 
 private:
     // Heap-owned: the core is large and holds a CPU bound to its own bus, so Initialize replaces it instead of assigning.
-    std::unique_ptr<ingba::Core> core_ = std::make_unique<ingba::Core>();
+    // Allocated by Initialize and freed by Shutdown, so an unused GBA core costs nothing.
+    std::unique_ptr<ingba::Core> core_;
     bool initialized_ = false;
     bool loaded_ = false;
     std::optional<std::filesystem::path> bios_path_;

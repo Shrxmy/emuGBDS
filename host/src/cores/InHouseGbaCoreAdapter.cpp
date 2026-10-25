@@ -64,6 +64,7 @@ void InHouseGbaCoreAdapter::Shutdown() noexcept {
     if (initialized_ && !core_->FlushSave(error)) {
         std::cerr << "[ingba] " << error << "\n";
     }
+    core_.reset(); // frees the ROM image and the console's memory
     initialized_ = false;
     loaded_ = false;
 }
@@ -81,7 +82,9 @@ bool InHouseGbaCoreAdapter::SetBiosPath(const std::filesystem::path& bios_path, 
 }
 
 void InHouseGbaCoreAdapter::ApplyInputMasks(uint32_t press_mask, uint32_t release_mask) noexcept {
-    core_->ApplyInputMasks(press_mask, release_mask);
+    if (core_) {
+        core_->ApplyInputMasks(press_mask, release_mask);
+    }
 }
 
 bool InHouseGbaCoreAdapter::GetVideoFrame(runtime::VideoFrame& out_frame) const noexcept {

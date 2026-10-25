@@ -1,5 +1,7 @@
 #pragma once
 
+#include "emugbds/core/SaveFile.h"
+
 // Address map, storage sizes, and memory-file helpers for the in-house GBA core.
 
 #include <array>
@@ -71,20 +73,7 @@ inline bool LoadWholeFile(
     const std::filesystem::path& path,
     std::vector<uint8_t>& out_bytes,
     std::string& error) {
-    std::ifstream input(path, std::ios::binary);
-    if (!input.is_open()) {
-        error = "Failed to open file: " + path.string();
-        return false;
-    }
-
-    out_bytes.assign(
-        std::istreambuf_iterator<char>(input),
-        std::istreambuf_iterator<char>());
-    if (out_bytes.empty()) {
-        error = "File is empty: " + path.string();
-        return false;
-    }
-    return true;
+    return core::ReadWholeFile(path, out_bytes, error);
 }
 
 inline uint8_t ReadFromSpan(
