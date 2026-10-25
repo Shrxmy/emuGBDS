@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- CPU timing: instructions now take their real cycle counts (memory waitstates,
+  WAITCNT, multiplies, branches) on the GBA and on both DS CPUs, instead of one
+  cycle each. DS boot and menu transitions stutter far less.
+- DS: a GBA cartridge can sit in Slot-2 (File > Slot-2 cartridge) and keeps its save;
+  firmware settings are saved to `<firmware>.sav`.
+- Lower memory use: exact-size ROM loads, and each core is allocated only when used.
+
 ## 0.2.0
 
 First public build. Windows x64; no BIOS, firmware, or game files are included.

@@ -103,6 +103,7 @@ private:
     bool in_hblank_ = false;
     bool in_vcounter_match_ = false;
     uint32_t lcd_cycle_in_frame_ = 0;
+    uint32_t cycle_carry_ = 0; // cycles the previous frame's last instruction ran past its end
     uint64_t frame_counter_ = 0;
     uint8_t last_unsupported_swi_ = 0;
     uint8_t hidden_layers_ = 0;

@@ -46,6 +46,8 @@ public:
 
     ArmCpu(IBus& bus, ICpuHost& host, ArmArchitecture architecture) noexcept
         : bus_(bus), host_(host), v5_(architecture == ArmArchitecture::V5TE) {}
+    // Cycles the instructions since the last call took (at least 1 per instruction), and resets the count.
+    uint32_t TakeCycles() noexcept { return bus_.TakeCycles(); }
     ArmCpu(const ArmCpu&) = delete;
     ArmCpu& operator=(const ArmCpu&) = delete;
 
@@ -88,6 +90,12 @@ private:
         bool overflow = false;
     };
 
+    bool ExecuteNext(std::string& error);
+    // Multiplier timing: m = 1-4 by how many top bytes of the multiplier are all 0s or all 1s (GBATEK).
+    static uint32_t MultiplyCycles(uint32_t multiplier) noexcept {
+        const uint32_t top = multiplier ^ static_cast<uint32_t>(static_cast<int32_t>(multiplier) >> 31);
+        return top < 0x100u ? 1u : top < 0x10000u ? 2u : top < 0x1000000u ? 3u : 4u;
+    }
     bool ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t fetch_pc, std::string& error);
     bool ExecuteArmPsrTransfer(uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, std::string& error);
     bool ExecuteArmDataProcessing(uint32_t instruction, uint32_t fetch_pc, uint32_t next_pc, std::string& error);
@@ -139,7 +147,80 @@ private:
     uint32_t ReadCurrentSpsr() const noexcept;
     bool WriteCurrentSpsr(uint32_t value) noexcept;
 
-    IBus& bus_;
+    // The system bus seen through the CPU's cycle counter: every access is charged the bus's
+    // AccessCycles, sequential when it continues the previous access. One load instruction (LDR,
+    // LDM, SWP, POP...) also costs one internal cycle, charged on its first data read.
+    class TimedBus {
+    public:
+        explicit TimedBus(IBus& bus) noexcept : bus_(bus) {}
+        uint8_t Read8(uint32_t address) const { ChargeRead(address, 1u); return bus_.Read8(address); }
+        uint16_t Read16(uint32_t address) const { ChargeRead(address, 2u); return bus_.Read16(address); }
+        uint32_t Read32(uint32_t address) const { ChargeRead(address, 4u); return bus_.Read32(address); }
+        void Write8(uint32_t address, uint8_t value) { Charge(address, 1u, false); bus_.Write8(address, value); }
+        void Write16(uint32_t address, uint16_t value) { Charge(address, 2u, false); bus_.Write16(address, value); }
+        void Write32(uint32_t address, uint32_t value) { Charge(address, 4u, false); bus_.Write32(address, value); }
+        uint16_t Fetch16(uint32_t address) const {
+            loaded_ = false; // a new instruction
+            Charge(address, 2u, true);
+            return bus_.Read16(address);
+        }
+        uint32_t Fetch32(uint32_t address) const {
+            loaded_ = false;
+            Charge(address, 4u, true);
+            return bus_.Read32(address);
+        }
+        // A taken branch refills the pipeline: one more (sequential) opcode fetch at the target.
+        void Refill(uint32_t target, uint32_t width) const { cycles_ += Cost(target + width, width, true, true); }
+        void AddInternal(uint32_t cycles) const noexcept { cycles_ += cycles; }
+        uint32_t TakeCycles() noexcept {
+            const uint32_t cycles = cycles_ == 0u ? 1u : cycles_;
+            cycles_ = 0u;
+            return cycles;
+        }
+
+    private:
+        uint32_t Cost(uint32_t address, uint32_t width, bool sequential, bool code) const {
+            if (times_ == nullptr) {
+                return UntabledCost(address, width, sequential, code);
+            }
+            if (address < times_->itcm_end || (!code && address - times_->dtcm_base < times_->dtcm_size)) {
+                return times_->tcm_cost;
+            }
+            return times_->cost[(address >> 24u) & 0xFu][code ? 1 : 0][sequential ? 1 : 0][width == 4u ? 1 : 0];
+        }
+        // Looks the table up on first use (the table lives in the bus, so its address is stable);
+        // buses without one answer through AccessCycles.
+        uint32_t UntabledCost(uint32_t address, uint32_t width, bool sequential, bool code) const {
+            if (!times_checked_) {
+                times_checked_ = true;
+                times_ = bus_.access_times();
+                if (times_ != nullptr) {
+                    return Cost(address, width, sequential, code);
+                }
+            }
+            return bus_.AccessCycles(address, width, sequential, code);
+        }
+        void Charge(uint32_t address, uint32_t width, bool code) const {
+            cycles_ += Cost(address, width, address == next_, code);
+            next_ = address + width;
+        }
+        void ChargeRead(uint32_t address, uint32_t width) const {
+            if (!loaded_) {
+                loaded_ = true;
+                cycles_ += 1u; // the load's internal cycle
+            }
+            Charge(address, width, false);
+        }
+
+        IBus& bus_;
+        mutable uint32_t cycles_ = 0u;
+        mutable uint32_t next_ = 0xFFFFFFFFu; // the address a sequential access would use
+        mutable bool loaded_ = false;
+        mutable const AccessTimes* times_ = nullptr;
+        mutable bool times_checked_ = false;
+    };
+
+    TimedBus bus_;
     ICpuHost& host_;
     bool v5_ = false;
     bool load_interworking_ = true;

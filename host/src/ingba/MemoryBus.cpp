@@ -555,6 +555,50 @@ void MemoryBus::WriteGpio(uint32_t address, uint16_t value) noexcept {
 }
 
 
+void MemoryBus::RefreshAccessTimes() noexcept {
+    for (uint32_t region = 0u; region < 16u; ++region) {
+        for (int code = 0; code < 2; ++code) {
+            for (int sequential = 0; sequential < 2; ++sequential) {
+                for (int wide = 0; wide < 2; ++wide) {
+                    access_times_.cost[region][code][sequential][wide] = static_cast<uint8_t>(
+                        AccessCycles(region << 24u, wide != 0 ? 4u : 2u, sequential != 0, code != 0));
+                }
+            }
+        }
+    }
+}
+
+
+uint32_t MemoryBus::AccessCycles(uint32_t address, uint32_t width, bool sequential, bool code) const {
+    // WAITCNT first-access (N) waitstates 0-3 -> 4,3,2,8; second-access (S) per waitstate area.
+    static constexpr std::array<uint32_t, 4u> kFirstWait = {4u, 3u, 2u, 8u};
+    static constexpr std::array<uint32_t, 3u> kSecondWait = {2u, 4u, 8u};
+    switch (address >> 24u) {
+    case 0x02u: // EWRAM: 16-bit bus, 2 waitstates
+        return width == 4u ? 6u : 3u;
+    case 0x05u: // palette and VRAM: 16-bit bus
+    case 0x06u:
+        return width == 4u ? 2u : 1u;
+    case 0x08u: case 0x09u: case 0x0Au: case 0x0Bu: case 0x0Cu: case 0x0Du: {
+        const uint32_t area = ((address >> 24u) - 0x08u) / 2u; // WS0, WS1, WS2
+        if (code && sequential && (waitcnt_ & 0x4000u) != 0u) {
+            // shortcut: the prefetch buffer is modelled as always ahead of sequential opcode fetches.
+            return width == 4u ? 2u : 1u;
+        }
+        const uint32_t first = kFirstWait[(waitcnt_ >> (2u + area * 3u)) & 3u];
+        const uint32_t second = (waitcnt_ & (1u << (4u + area * 3u))) != 0u ? 1u : kSecondWait[area];
+        const uint32_t cycles = 1u + (sequential ? second : first);
+        return width == 4u ? cycles + 1u + second : cycles; // 32-bit: two halfwords on the 16-bit bus
+    }
+    case 0x0Eu: // SRAM/FLASH: 8-bit bus
+    case 0x0Fu:
+        return 1u + kFirstWait[waitcnt_ & 3u];
+    default: // BIOS, IWRAM, I/O, OAM: 32-bit, no waitstates
+        return 1u;
+    }
+}
+
+
 uint16_t MemoryBus::Read16(uint32_t address) const {
     if (const uint8_t* bytes = DirectReadPointer(address, 2u)) {
         return static_cast<uint16_t>(bytes[0] | (bytes[1] << 8u));
@@ -651,6 +695,7 @@ void MemoryBus::Write8(uint32_t address, uint8_t value) {
             } else {
                 waitcnt_ = static_cast<uint16_t>((waitcnt_ & 0x00FFu) | (static_cast<uint16_t>(value) << 8u));
             }
+            RefreshAccessTimes();
             io_[address - kIoBase] = value;
             return;
         }

@@ -19,6 +19,9 @@ bool ArmCpu::ExecuteArmDataProcessing(
     }
 
     const uint32_t operand1 = ReadArmRegister(rn, fetch_pc);
+    if ((instruction & 0x02000010u) == 0x00000010u) {
+        bus_.AddInternal(1u); // shift by register: +1I
+    }
 
     uint32_t result = 0;
     bool write_result = true;
@@ -428,6 +431,7 @@ bool ArmCpu::ExecuteArmMultiply(
     const uint64_t lhs = static_cast<uint64_t>(ReadArmRegister(rm, fetch_pc));
     const uint64_t rhs = static_cast<uint64_t>(ReadArmRegister(rs, fetch_pc));
     uint64_t wide = lhs * rhs;
+    bus_.AddInternal(MultiplyCycles(static_cast<uint32_t>(rhs)) + (accumulate ? 1u : 0u)); // MUL 1S+mI, MLA 1S+(m+1)I
 
     if (accumulate) {
         wide += static_cast<uint64_t>(ReadArmRegister(rn, fetch_pc));
@@ -461,6 +465,7 @@ bool ArmCpu::ExecuteArmMultiplyLong(
     if (rd_hi == 15u || rd_lo == 15u || rd_hi == rd_lo) {
         return false;
     }
+    bus_.AddInternal(MultiplyCycles(ReadArmRegister(rs, fetch_pc)) + (accumulate ? 2u : 1u)); // MULL (m+1)I, MLAL (m+2)I
 
     uint64_t wide_result = 0;
     if (signed_multiply) {

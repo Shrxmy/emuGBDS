@@ -44,7 +44,7 @@ bool Core::RunFrame(std::string& error) {
         return false;
     }
 
-    uint32_t cycles = 0;
+    uint32_t cycles = cycle_carry_;
     bus_.apu().ClearSamples();
     cpu_.set_trace_frame(frame_counter_);
     AdvanceLcdTiming(lcd_cycle_in_frame_);
@@ -59,7 +59,8 @@ bool Core::RunFrame(std::string& error) {
                 halted_ = false;
             }
         }
-        if (!halted_) {
+        const bool stepped = !halted_;
+        if (stepped) {
 #ifndef NDEBUG
             const uint32_t pre_step_pc = cpu_.state().r[15];
             const uint32_t pre_step_instr = cpu_.state().thumb
@@ -92,7 +93,8 @@ bool Core::RunFrame(std::string& error) {
             }
 #endif
         }
-        uint32_t elapsed = 1u;
+        // An executed instruction takes its own cycle count (fetch + data accesses + internal cycles).
+        uint32_t elapsed = stepped ? cpu_.TakeCycles() : 1u;
         const bool wake_pending = halted_ &&
             static_cast<uint16_t>(bus_.Read16(kInterruptEnableAddress) & bus_.Read16(kInterruptFlagAddress)) != 0u;
         if (halted_ && !wake_pending) {
@@ -105,13 +107,23 @@ bool Core::RunFrame(std::string& error) {
         }
         cycles += elapsed;
         bus_.AdvanceTimers(elapsed);
+        const uint32_t previous_line_cycle = lcd_cycle_in_frame_ % kCyclesPerScanline;
         lcd_cycle_in_frame_ = (lcd_cycle_in_frame_ + elapsed) % kCyclesPerFrame;
-        // LCD state changes at line start and HBlank start; a new VCOUNT target is compared at once.
+        // LCD state changes at line start and HBlank start; a step that crosses one is applied at the
+        // edge itself (steps are shorter than a line). A new VCOUNT target is compared at once.
         const uint32_t line_cycle = lcd_cycle_in_frame_ % kCyclesPerScanline;
-        if (line_cycle == 0u || line_cycle == kHBlankStartCycle || bus_.ConsumeVCountTargetWrite()) {
+        const uint32_t line_start = lcd_cycle_in_frame_ - line_cycle;
+        const bool new_line = line_cycle < previous_line_cycle;
+        if (new_line) {
+            AdvanceLcdTiming(line_start);
+        }
+        if (line_cycle >= kHBlankStartCycle && (new_line || previous_line_cycle < kHBlankStartCycle)) {
+            AdvanceLcdTiming(line_start + kHBlankStartCycle);
+        } else if (bus_.ConsumeVCountTargetWrite()) {
             AdvanceLcdTiming(lcd_cycle_in_frame_);
         }
     }
+    cycle_carry_ = cycles - kCyclesPerFrame; // the last step's overshoot belongs to the next frame
 
     UpdateVideoFrame();
     ++frame_counter_;
@@ -155,6 +167,7 @@ bool Core::Reset(std::string& error) {
     in_hblank_ = false;
     in_vcounter_match_ = false;
     lcd_cycle_in_frame_ = 0;
+    cycle_carry_ = 0;
     bus_.ApplyKeyInputMasks(0u, 0x03FFu);
     bus_.Write16(kWaitCntAddress, 0x4317u);
     bus_.Write8(kPostFlgAddress, 0x00u);

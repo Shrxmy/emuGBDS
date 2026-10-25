@@ -91,6 +91,9 @@ bool Core::CpuHost::OnCoprocessorWrite(uint32_t coprocessor, uint32_t opcode1, u
         return false;
     }
     core_.arm9_.set_load_interworking(core_.bus_.cp15().load_interworking());
+    if (crn == 1u || crn == 9u) { // control (caches, TCM enables) or TCM regions
+        core_.bus_.RefreshAccessTimes();
+    }
     return true;
 }
 
@@ -189,8 +192,7 @@ bool Core::RunFrame(std::string& error) {
         arm7_.set_trace_frame(frame_counter_);
         Io& io = bus_.io();
         io.StartLine(0u);
-        // shortcut: one instruction per cycle on both CPUs at the fixed 2:1 clock ratio, interleaved in
-        // short slices; replace with per-instruction timing once games depend on it.
+        // Both CPUs at the fixed 2:1 clock ratio, interleaved in short slices of ARM7 cycles.
         for (uint32_t done = 0u; done < kArm7CyclesPerFrame; done += kSliceCycles) {
             const uint32_t slice = std::min(kSliceCycles, kArm7CyclesPerFrame - done);
             if (!RunCpu(arm9_, 0, slice * 2u, error) ||
@@ -248,12 +250,17 @@ bool Core::RunFrame(std::string& error) {
     return true;
 }
 
-bool Core::RunCpu(arm::ArmCpu& cpu, int index, uint32_t steps, std::string& error) {
+bool Core::RunCpu(arm::ArmCpu& cpu, int index, uint32_t cycles, std::string& error) {
     Io& io = bus_.io();
     bool& halted = index == 0 ? arm9_halted_ : arm7_halted_;
-    for (uint32_t i = 0u; i < steps; ++i) {
+    // Instructions take their real cycle counts; an instruction that runs past the slice is paid
+    // for out of the next one.
+    int64_t& balance = cycle_balance_[static_cast<size_t>(index)];
+    balance += cycles;
+    while (balance > 0) {
         if (halted) {
             if (!io.WakeRequested(index)) {
+                balance = 0;
                 return true; // Stays halted for the rest of this slice.
             }
             halted = false;
@@ -267,6 +274,7 @@ bool Core::RunCpu(arm::ArmCpu& cpu, int index, uint32_t steps, std::string& erro
         if (!cpu.Step(error)) {
             return false;
         }
+        balance -= cpu.TakeCycles();
         halted = index == 0 ? bus_.cp15().ConsumeHaltRequest() : io.ConsumeArm7HaltRequest();
         if (io.gba_mode_requested()) {
             return true; // The DS stops at the instruction that requested GBA mode.
@@ -406,6 +414,7 @@ bool Core::Reset(std::string& error) {
     arm7_.WriteCpsr(kCpsrSvc);
     arm9_halted_ = false;
     arm7_halted_ = false;
+    cycle_balance_ = {};
     firmware_flushed_revision_ = 0u; // ResetMemory resets the SPI revision with the rest of the I/O
     cpus_active_ = false;
     firmware_running_ = false;

@@ -3,6 +3,7 @@
 #include "emugbds/core/SaveFile.h"
 
 #include <algorithm>
+#include <cstring>
 #include <fstream>
 #include <iterator>
 
@@ -31,6 +32,7 @@ MemoryBus::MemoryBus()
       itcm_(Cp15::kItcmPhysicalSize, 0u),
       dtcm_(Cp15::kDtcmPhysicalSize, 0u) {
     cp15_.Reset();
+    RefreshAccessTimes();
     io_.card().AttachRom(&nds_rom_);
     io_.Reset();
 }
@@ -101,6 +103,7 @@ void MemoryBus::ResetMemory() {
     }
     wramcnt_ = 3u; // Power-on: all shared WRAM belongs to the ARM7.
     cp15_.Reset();
+    RefreshAccessTimes();
     video_.Reset();
     for (Engine2d& engine : engines_) {
         engine.Reset();
@@ -175,6 +178,88 @@ uint8_t* MemoryBus::Arm7Pointer(uint32_t address, bool write) {
 }
 
 
+uint32_t MemoryBus::AccessCycles(bool arm9, uint32_t address, uint32_t width, bool sequential, bool code) const {
+    // NDS9: TCM runs at the full 66 MHz.
+    if (arm9 && cp15_.itcm_enabled() && address < cp15_.itcm_size()) {
+        return 1u;
+    }
+    if (arm9 && !code && cp15_.dtcm_enabled() && address - cp15_.dtcm_base() < cp15_.dtcm_size()) {
+        return 1u;
+    }
+    return RegionCycles(arm9, address >> 24u, width == 4u, sequential, code);
+}
+
+
+void MemoryBus::RefreshAccessTimes() {
+    // Index 0Fh stands for the BIOS at FFFF0000h (the table uses address bits 24-27).
+    for (uint32_t region = 0u; region < 16u; ++region) {
+        for (int code = 0; code < 2; ++code) {
+            for (int sequential = 0; sequential < 2; ++sequential) {
+                for (int wide = 0; wide < 2; ++wide) {
+                    const uint32_t full_region = region == 0xFu ? 0xFFu : region;
+                    arm9_times_.cost[region][code][sequential][wide] = static_cast<uint8_t>(
+                        RegionCycles(true, full_region, wide != 0, sequential != 0, code != 0));
+                    arm7_times_.cost[region][code][sequential][wide] = static_cast<uint8_t>(
+                        RegionCycles(false, full_region, wide != 0, sequential != 0, code != 0));
+                }
+            }
+        }
+    }
+    arm9_times_.itcm_end = cp15_.itcm_enabled() ? static_cast<uint32_t>(std::min<uint64_t>(cp15_.itcm_size(), 0xFFFFFFFFu)) : 0u;
+    arm9_times_.dtcm_base = cp15_.dtcm_base();
+    arm9_times_.dtcm_size = cp15_.dtcm_enabled() ? static_cast<uint32_t>(std::min<uint64_t>(cp15_.dtcm_size(), 0xFFFFFFFFu)) : 0u;
+}
+
+
+uint32_t MemoryBus::RegionCycles(bool arm9, uint32_t region, bool wide, bool sequential, bool code) const {
+    // 8-bit accesses time like 16-bit ones.
+    if (!arm9) {
+        // NDS7 table (33 MHz units). Main RAM always pays the 3-wait nonsequential penalty.
+        switch (region) {
+        case 0x02u: return sequential ? (wide ? 2u : 1u) : (wide ? (code ? 9u : 10u) : (code ? 8u : 9u));
+        case 0x05u:
+        case 0x06u: return wide ? 2u : 1u;
+        case 0x08u:
+        case 0x09u: return sequential ? (wide ? 12u : 6u) : (wide ? (code ? 16u : 15u) : (code ? 10u : 9u));
+        case 0x0Au: return sequential ? 10u : 9u;
+        default: return 1u; // BIOS, WRAM, I/O, OAM
+        }
+    }
+    // NDS9: cache hits run at the full 66 MHz.
+    // shortcut: no cache is modelled; with a cache enabled, main RAM (and BIOS code) count as hits.
+    const uint32_t control = cp15_.control();
+    const bool icache = (control & (1u << 12)) != 0u;
+    const bool dcache = (control & (1u << 2)) != 0u;
+    if (code ? icache && (region == 0x02u || region == 0xFFu) : dcache && region == 0x02u) {
+        return 1u;
+    }
+    if (code) {
+        // Opcode fetches are always nonsequential 32-bit with the 3-wait penalty (a Thumb opcode costs half).
+        uint32_t bus = 4u; // WRAM, BIOS, I/O, OAM
+        switch (region) {
+        case 0x02u: bus = 9u; break;
+        case 0x05u:
+        case 0x06u: bus = 5u; break;
+        case 0x08u:
+        case 0x09u: bus = 19u; break;
+        default: break;
+        }
+        return wide ? bus * 2u : bus; // ARM9 cycles: x2 for 32 bits, x1 for half of a 32-bit fetch
+    }
+    uint32_t bus = sequential ? 1u : 4u; // WRAM, BIOS, I/O, OAM
+    switch (region) {
+    case 0x02u: bus = sequential ? (wide ? 2u : 1u) : (wide ? 10u : 9u); break;
+    case 0x05u:
+    case 0x06u: bus = sequential ? (wide ? 2u : 1u) : (wide ? 5u : 4u); break;
+    case 0x08u:
+    case 0x09u: bus = sequential ? (wide ? 12u : 6u) : (wide ? 19u : 13u); break;
+    case 0x0Au: bus = sequential ? 10u : 13u; break;
+    default: break;
+    }
+    return bus * 2u;
+}
+
+
 uint32_t MemoryBus::Read(bool arm9, uint32_t address, uint32_t size, bool use_tcm) const {
     if ((address & (size - 1u)) != 0u) {
         uint32_t value = 0u;
@@ -186,10 +271,9 @@ uint32_t MemoryBus::Read(bool arm9, uint32_t address, uint32_t size, bool use_tc
     // Memory reads never modify state; I/O reads can (FIFO pops), as on hardware.
     auto& self = const_cast<MemoryBus&>(*this);
     if (const uint8_t* bytes = arm9 ? self.Arm9Pointer(address, false, use_tcm) : self.Arm7Pointer(address, false)) {
+        // Little-endian host; an aligned access stays inside its (word-multiple) backing store.
         uint32_t value = 0u;
-        for (uint32_t i = 0u; i < size; ++i) {
-            value |= static_cast<uint32_t>(bytes[i]) << (8u * i);
-        }
+        std::memcpy(&value, bytes, size);
         return value;
     }
 
@@ -226,9 +310,7 @@ void MemoryBus::Write(bool arm9, uint32_t address, uint32_t value, uint32_t size
         return; // The ARM9 cannot write single bytes to palette, VRAM, or OAM.
     }
     if (uint8_t* bytes = arm9 ? Arm9Pointer(address, true, use_tcm) : Arm7Pointer(address, true)) {
-        for (uint32_t i = 0u; i < size; ++i) {
-            bytes[i] = static_cast<uint8_t>(value >> (8u * i));
-        }
+        std::memcpy(bytes, &value, size);
         return;
     }
 

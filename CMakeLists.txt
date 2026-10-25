@@ -14,6 +14,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(EMUGBDS_ENABLE_MELONDS "Build with melonDS core adapter support" OFF)
 include(CTest)
 
+# Whole-program optimization for Release: the CPU interpreter's hot paths (bus reads, cycle
+# timing) cross source files, and inlining them across files is a large speedup.
+include(CheckIPOSupported)
+check_ipo_supported(RESULT EMUGBDS_IPO_SUPPORTED OUTPUT EMUGBDS_IPO_ERROR LANGUAGES CXX)
+if(EMUGBDS_IPO_SUPPORTED)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+endif()
+
 set(EMUGBDS_SDL2_TARGET "")
 find_package(SDL2 QUIET CONFIG)
 if(SDL2_FOUND)

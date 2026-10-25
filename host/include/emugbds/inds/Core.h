@@ -6,6 +6,7 @@
 #include "emugbds/inds/MemoryBus.h"
 #include "emugbds/nds/NdsCartridgeHeader.h"
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -78,8 +79,8 @@ private:
     };
 
     bool DirectBoot(std::string& error);
-    // Runs up to `steps` instructions unless the CPU halts; IRQs are taken between instructions.
-    bool RunCpu(arm::ArmCpu& cpu, int index, uint32_t steps, std::string& error);
+    // Runs the CPU for `cycles` of its own clock unless it halts; IRQs are taken between instructions.
+    bool RunCpu(arm::ArmCpu& cpu, int index, uint32_t cycles, std::string& error);
     // Raises the LCD line-start and H-Blank events in (from, to] (frame-relative ARM7 cycles).
     void AdvanceLcd(uint32_t from, uint32_t to);
     bool ShouldRequestFirmwareSlot2Transition() const noexcept;
@@ -110,6 +111,7 @@ private:
     core::DsBootMode boot_mode_ = core::DsBootMode::Auto;
     uint64_t frame_counter_ = 0;
     uint64_t firmware_menu_frame_counter_ = 0;
+    std::array<int64_t, 2> cycle_balance_{}; // ARM9/ARM7 cycles left in (or overdrawn from) the slice
     uint64_t save_revision_ = 0;
     uint64_t firmware_flushed_revision_ = 0; // SPI firmware revision last written to <firmware>.sav
     uint32_t save_idle_frames_ = 0;

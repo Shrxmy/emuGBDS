@@ -90,6 +90,8 @@ public:
 
     // The ARM9's CP15 lives here because its TCM settings decide the ARM9 memory map.
     Cp15& cp15() noexcept { return cp15_; }
+    // Rebuilds the CPUs' access cost tables; call after CP15 cache or TCM settings change.
+    void RefreshAccessTimes();
     const Cp15& cp15() const noexcept { return cp15_; }
     VideoMemory& video() noexcept { return video_; }
     const VideoMemory& video() const noexcept { return video_; }
@@ -113,6 +115,12 @@ private:
         void Write8(uint32_t address, uint8_t value) override { memory_.Write(arm9_, address, value, 1u); }
         void Write16(uint32_t address, uint16_t value) override { memory_.Write(arm9_, address, value, 2u); }
         void Write32(uint32_t address, uint32_t value) override { memory_.Write(arm9_, address, value, 4u); }
+        uint32_t AccessCycles(uint32_t address, uint32_t width, bool sequential, bool code) const override {
+            return memory_.AccessCycles(arm9_, address, width, sequential, code);
+        }
+        const arm::AccessTimes* access_times() const override {
+            return arm9_ ? &memory_.arm9_times_ : &memory_.arm7_times_;
+        }
 
     private:
         MemoryBus& memory_;
@@ -120,6 +128,10 @@ private:
     };
 
     uint32_t Read(bool arm9, uint32_t address, uint32_t size, bool use_tcm = true) const;
+    // GBATEK "DS Memory Timings", in the CPU's own clock: ARM7 cycles, or ARM9 cycles (twice the bus clock).
+    uint32_t AccessCycles(bool arm9, uint32_t address, uint32_t width, bool sequential, bool code) const;
+    // AccessCycles outside the TCMs, by address bits 24-31.
+    uint32_t RegionCycles(bool arm9, uint32_t region, bool wide, bool sequential, bool code) const;
     void Write(bool arm9, uint32_t address, uint32_t value, uint32_t size, bool use_tcm = true);
     // Backing storage for an address, or nullptr for I/O and unmapped space.
     uint8_t* Arm9Pointer(uint32_t address, bool write, bool use_tcm);
@@ -139,6 +151,8 @@ private:
     ingba::Backup slot2_backup_;
     uint8_t wramcnt_ = 3u;
     Cp15 cp15_{};
+    arm::AccessTimes arm9_times_{};
+    arm::AccessTimes arm7_times_{};
     VideoMemory video_{};
     std::array<Engine2d, 2> engines_{Engine2d{video_, 0}, Engine2d{video_, 1}};
     Io io_{*this};

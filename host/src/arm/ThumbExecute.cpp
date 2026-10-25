@@ -196,6 +196,9 @@ bool ArmCpu::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t
         const uint32_t rhs = ReadThumbRegister(rs, fetch_pc);
         const uint32_t lhs = ReadThumbRegister(rd, fetch_pc);
         uint32_t result = 0u;
+        if (op == 0x2u || op == 0x3u || op == 0x4u || op == 0x7u) {
+            bus_.AddInternal(1u); // LSL/LSR/ASR/ROR by register: +1I
+        }
 
         switch (op) {
         case 0x0: // AND
@@ -301,6 +304,7 @@ bool ArmCpu::ExecuteThumbInstruction(uint16_t instruction, uint32_t pc, uint32_t
             SetNZFlags(result);
             break;
         case 0xD: // MUL
+            bus_.AddInternal(MultiplyCycles(lhs));
             result = lhs * rhs;
             WriteThumbRegister(rd, result);
             SetNZFlags(result);

@@ -15,6 +15,7 @@ namespace emugbds::ingba {
 
 class MemoryBus final : public arm::IBus {
 public:
+    MemoryBus() noexcept { RefreshAccessTimes(); }
     bool LoadBios(const std::filesystem::path& bios_path, std::string& error);
     bool LoadRom(const std::filesystem::path& rom_path, std::string& error);
     bool HasBios() const noexcept { return bios_loaded_; }
@@ -51,6 +52,9 @@ public:
     void Write8(uint32_t address, uint8_t value) override;
     void Write16(uint32_t address, uint16_t value) override;
     void Write32(uint32_t address, uint32_t value) override;
+    // GBATEK "GBA Memory Map" cycles and WAITCNT cartridge waitstates.
+    uint32_t AccessCycles(uint32_t address, uint32_t width, bool sequential, bool code) const override;
+    const arm::AccessTimes* access_times() const override { return &access_times_; }
 
 private:
     void TryStartImmediateDma(uint32_t control_high_address, uint8_t previous_control_high);
@@ -97,6 +101,8 @@ private:
     uint16_t keyinput_state_ = 0x03FFu;
     uint8_t postflg_ = 0x00u;
     uint16_t waitcnt_ = 0x4317u;
+    arm::AccessTimes access_times_{}; // AccessCycles as a table, rebuilt on WAITCNT writes
+    void RefreshAccessTimes() noexcept;
     uint64_t dispcnt_write_count_ = 0;
     uint16_t last_dispcnt_written_ = 0;
     bool halt_requested_ = false;

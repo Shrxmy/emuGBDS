@@ -12,10 +12,22 @@ void ArmCpu::Reset() noexcept {
 
 
 bool ArmCpu::Step(std::string& error) {
+    const uint32_t pc = cpu_.r[15];
+    const uint32_t width = (cpu_.cpsr & kCpsrThumbBit) != 0u ? 2u : 4u;
+    const bool ok = ExecuteNext(error);
+    if (cpu_.r[15] != pc + width) {
+        // Jumps (branches, PC loads, exceptions) refill the pipeline: B/BL/SWI are 2S+1N.
+        bus_.Refill(cpu_.r[15], (cpu_.cpsr & kCpsrThumbBit) != 0u ? 2u : 4u);
+    }
+    return ok;
+}
+
+
+bool ArmCpu::ExecuteNext(std::string& error) {
     cpu_.thumb = (cpu_.cpsr & kCpsrThumbBit) != 0u;
 
     if (cpu_.thumb) {
-        const uint16_t instruction = bus_.Read16(cpu_.r[15]);
+        const uint16_t instruction = bus_.Fetch16(cpu_.r[15]);
         const uint32_t pc = cpu_.r[15];
         const uint32_t fetch_pc = pc + 4u;
         return ExecuteThumbInstruction(instruction, pc, fetch_pc, error);
@@ -23,17 +35,18 @@ bool ArmCpu::Step(std::string& error) {
 
     const uint32_t pc = cpu_.r[15];
     const uint32_t fetch_pc = pc + 8;
-    const uint32_t instruction = bus_.Read32(pc);
+    const uint32_t instruction = bus_.Fetch32(pc);
     const uint32_t next_pc = pc + 4;
 
     if (v5_ && (instruction >> 28u) == 0xFu) {
         return ExecuteArmUnconditional(instruction, fetch_pc, next_pc, error); // ARMv4 treats cond=1111 as never.
     }
-    if (!ConditionPassed(instruction)) {
+    if ((instruction >> 28u) != 0xEu && !ConditionPassed(instruction)) {
         cpu_.r[15] = next_pc;
         return true;
     }
-    if (v5_) {
+    // Every ARMv5 addition decoded there sits in the miscellaneous-instruction space or is MRC/MCR.
+    if (v5_ && ((instruction & 0x0F900000u) == 0x01000000u || (instruction & 0x0F000010u) == 0x0E000010u)) {
         bool handled = false;
         const bool ok = ExecuteArmV5Instruction(instruction, fetch_pc, next_pc, handled);
         if (handled) {

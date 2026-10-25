@@ -1212,6 +1212,78 @@ void TestArmMemoryAdditions(TestContext& t) {
     }
 }
 
+void TestCpuCycleTiming(TestContext& t) {
+    using namespace emugbds::arm;
+    // Code at 00xxxxxxh costs 1 cycle; data at 01xxxxxxh costs 5 nonsequential, 2 sequential.
+    struct TimedRam final : IBus, ICpuHost {
+        std::vector<uint8_t> ram = std::vector<uint8_t>(0x10000u, 0u);
+        bool table = false;
+        AccessTimes times{};
+        TimedRam() {
+            for (int code = 0; code < 2; ++code) {
+                for (int wide = 0; wide < 2; ++wide) {
+                    times.cost[0][code][0][wide] = times.cost[0][code][1][wide] = 1u;
+                    times.cost[1][code][0][wide] = 5u;
+                    times.cost[1][code][1][wide] = 2u;
+                }
+            }
+        }
+        uint8_t Read8(uint32_t a) const override { return ram[a & 0xFFFFu]; }
+        uint16_t Read16(uint32_t a) const override { return static_cast<uint16_t>(Read8(a) | (Read8(a + 1u) << 8u)); }
+        uint32_t Read32(uint32_t a) const override { return Read16(a) | (static_cast<uint32_t>(Read16(a + 2u)) << 16u); }
+        void Write8(uint32_t a, uint8_t v) override { ram[a & 0xFFFFu] = v; }
+        void Write16(uint32_t a, uint16_t v) override { Write8(a, static_cast<uint8_t>(v)); Write8(a + 1u, static_cast<uint8_t>(v >> 8u)); }
+        void Write32(uint32_t a, uint32_t v) override { Write16(a, static_cast<uint16_t>(v)); Write16(a + 2u, static_cast<uint16_t>(v >> 16u)); }
+        uint32_t AccessCycles(uint32_t a, uint32_t, bool sequential, bool) const override {
+            return (a >> 24u) == 1u ? (sequential ? 2u : 5u) : 1u;
+        }
+        const AccessTimes* access_times() const override { return table ? &times : nullptr; }
+        bool OnSoftwareInterrupt(uint8_t, uint32_t, bool, std::string&) override { return false; }
+    };
+    for (const bool table : {false, true}) {
+        TimedRam bus;
+        bus.table = table;
+        ArmCpu cpu(bus, bus, ArmArchitecture::V4T);
+        cpu.Reset();
+        const uint32_t program[] = {
+            0xE3A00001u, // MOV r0, #1          1S
+            0xE5921000u, // LDR r1, [r2]        1S + 1N + 1I
+            0xE8920018u, // LDMIA r2, {r3, r4}  1S + 1N + 1S + 1I
+            0xE0050594u, // MUL r5, r4, r5      1S + 4I (multiplier r5 needs all 4 bytes)
+            0xEAFFFFFEu, // B .                 2S + 1N (the N is the target's own fetch)
+        };
+        for (uint32_t i = 0u; i < 5u; ++i) {
+            bus.Write32(i * 4u, program[i]);
+        }
+        cpu.state().r[2] = 0x01008000u;
+        cpu.state().r[5] = 0x12345678u;
+        std::string error;
+        uint32_t cycles[5] = {};
+        for (uint32_t& c : cycles) {
+            cpu.Step(error);
+            c = cpu.TakeCycles();
+        }
+        t.Expect(cycles[0] == 1u && cycles[1] == 7u && cycles[2] == 9u && cycles[3] == 5u && cycles[4] == 2u,
+            table ? "instruction cycles from an access table" : "instruction cycles from AccessCycles");
+    }
+
+    emugbds::ingba::MemoryBus gba;
+    gba.Write16(0x04000204u, 0x000Cu); // WAITCNT: WS0 first access 8 waits
+    t.Expect(gba.access_times()->cost[8][0][0][0] == 9u && gba.AccessCycles(0x08000000u, 2u, false, false) == 9u,
+        "GBA access table follows WAITCNT");
+
+    emugbds::inds::MemoryBus ds;
+    ds.cp15().Write(0u, 9u, 1u, 0u, 0x0200000Au); // DTCM over 02000000h
+    ds.cp15().Write(0u, 1u, 0u, 0u, 1u << 16);
+    ds.RefreshAccessTimes();
+    const AccessTimes& arm9 = *ds.arm9().access_times();
+    t.Expect(arm9.dtcm_base == 0x02000000u && arm9.dtcm_size != 0u && ds.arm9().AccessCycles(0x02000000u, 4u, false, false) == 1u,
+        "DS ARM9 access table follows the DTCM");
+    t.Expect(arm9.cost[2][0][0][1] == ds.arm9().AccessCycles(0x02400000u, 4u, false, false) &&
+            arm9.cost[2][0][0][1] == 20u,
+        "uncached ARM9 main RAM data costs N32 with the 3-wait penalty, in ARM9 cycles");
+}
+
 void TestArmV5CoprocessorTransfers(TestContext& t) {
     using emugbds::arm::ArmArchitecture;
     ArmCpuHarness h(ArmArchitecture::V5TE);
@@ -3654,12 +3726,13 @@ int RunUnitTests() {
         void (*fn)(TestContext&);
     };
 
-    const std::array<NamedTest, 69> tests = {{
+    const std::array<NamedTest, 70> tests = {{
         {"frontend_settings", &TestFrontendSettings},
         {"arm_v5_clz_and_saturation", &TestArmV5ClzAndSaturation},
         {"arm_v5_halfword_multiplies", &TestArmV5HalfwordMultiplies},
         {"arm_v5_branches_and_interworking", &TestArmV5BranchesAndInterworking},
         {"arm_memory_additions", &TestArmMemoryAdditions},
+        {"cpu_cycle_timing", &TestCpuCycleTiming},
         {"arm_v5_coprocessor_transfers", &TestArmV5CoprocessorTransfers},
         {"ingba_memory_bus", &TestIngbaMemoryBus},
         {"ingba_backup", &TestIngbaBackup},
