@@ -2479,6 +2479,143 @@ void TestIndsBackupMemory(TestContext& t) {
     flash.Deselect();
 }
 
+void TestIndsSound(TestContext& t) {
+    emugbds::inds::MemoryBus bus;
+    auto& arm7 = bus.arm7();
+    auto& sound = bus.io().sound();
+    constexpr uint32_t kChannelCnt = 0x04000400u;
+    constexpr uint32_t kPcm8 = 0u << 29;
+    constexpr uint32_t kPcm16 = 1u << 29;
+    constexpr uint32_t kAdpcm = 2u << 29;
+    constexpr uint32_t kPsg = 3u << 29;
+    constexpr uint32_t kLoop = 1u << 27;
+    constexpr uint32_t kOneShot = 2u << 27;
+    constexpr uint32_t kStart = 1u << 31;
+    constexpr uint32_t kFullVolume = 0x7Fu;
+    constexpr uint32_t kPanRight = 0x7Fu << 16;
+    constexpr uint32_t kOutputCycles = 1023u; // one 32768 Hz output sample is ~1022.75 ARM7 cycles
+    // Left outputs over `count` output samples, with runs of equal values merged.
+    const auto run = [&](uint32_t count, bool right = false) {
+        sound.ClearSamples();
+        sound.Advance(count * kOutputCycles);
+        std::vector<int16_t> changes;
+        for (size_t i = right ? 1u : 0u; i < sound.samples().size(); i += 2u) {
+            if (changes.empty() || changes.back() != sound.samples()[i]) {
+                changes.push_back(sound.samples()[i]);
+            }
+        }
+        return changes;
+    };
+    const auto channel = [&](uint32_t index, uint32_t source, uint16_t timer, uint16_t loop, uint32_t length, uint32_t control) {
+        const uint32_t base = kChannelCnt + index * 0x10u;
+        arm7.Write32(base + 4u, source);
+        arm7.Write32(base + 8u, timer | (static_cast<uint32_t>(loop) << 16u));
+        arm7.Write32(base + 0xCu, length);
+        arm7.Write32(base, control);
+    };
+    const auto busy = [&](uint32_t index) { return (arm7.Read32(kChannelCnt + index * 0x10u) & kStart) != 0u; };
+
+    arm7.Write16(0x04000500u, 0x807Fu); // SOUNDCNT: enabled, master volume 127
+    arm7.Write16(0x04000504u, 0x200u);  // SOUNDBIAS midpoint
+    t.Expect(arm7.Read16(0x04000500u) == 0x807Fu && arm7.Read16(0x04000504u) == 0x200u, "SOUNDCNT and SOUNDBIAS read back");
+
+    // PCM16 0x4000 at full volume, panned left: GBATEK's bit widths give DAC level 0x300, i.e. 0x4000 out.
+    for (uint32_t i = 0u; i < 8u; ++i) {
+        arm7.Write16(0x02000000u + i * 2u, 0x4000u);
+    }
+    const uint16_t slow = static_cast<uint16_t>(0x10000u - 2048u); // 4096 ARM7 cycles per channel sample
+    channel(0u, 0x02000000u, slow, 0u, 4u, kStart | kOneShot | kPcm16 | kFullVolume);
+    t.Expect(arm7.Read32(kChannelCnt + 4u) == 0u, "SOUNDxSAD is write-only");
+    t.Expect(busy(0u), "a started channel is busy");
+    std::vector<int16_t> left = run(60u);
+    t.Expect(left.size() == 3u && left[0] == 0 && left[1] == 0x4000 && left[2] == 0,
+        "a one-shot PCM16 sound starts after its delay, plays its samples, then goes silent");
+    t.Expect(!busy(0u), "a one-shot sound clears busy at its end");
+    channel(0u, 0x02000000u, slow, 0u, 4u, kStart | kOneShot | kPcm16 | kFullVolume | kPanRight);
+    t.Expect(run(60u, true) == std::vector<int16_t>({0, 0x4000, 0}) && run(1u) == std::vector<int16_t>({0}),
+        "panning fully right moves the sound to the right speaker");
+
+    // PCM8 loop: a byte NN plays as NN00h, and a looping sound stays busy.
+    for (uint32_t i = 0u; i < 16u; ++i) {
+        arm7.Write8(0x02000100u + i, 0x40u);
+    }
+    channel(1u, 0x02000100u, slow, 1u, 3u, kStart | kLoop | kPcm8 | kFullVolume);
+    left = run(120u);
+    t.Expect(left.size() == 2u && left[1] == 0x4000 && busy(1u), "a looping PCM8 sound keeps playing");
+    arm7.Write32(kChannelCnt + 0x10u, kLoop | kPcm8 | kFullVolume); // clear start: stop
+    t.Expect(!busy(1u) && run(4u) == std::vector<int16_t>({0}), "clearing the start bit stops a channel");
+
+    // IMA-ADPCM: header PCM 4000h at index 88, then nibbles 0 and 8 (step 7FFFh, then 7462h).
+    // 4000h + 7FFFh/8 = 4FFFh (DAC 0x200+319), then - 7462h/8 = 4173h (DAC 0x200+261).
+    arm7.Write32(0x02000200u, 0x00584000u);
+    arm7.Write32(0x02000204u, 0x00000080u);
+    for (uint32_t i = 2u; i < 4u; ++i) {
+        arm7.Write32(0x02000200u + i * 4u, 0u);
+    }
+    channel(2u, 0x02000200u, slow, 0u, 4u, kStart | kOneShot | kAdpcm | kFullVolume);
+    left = run(80u);
+    t.Expect(left.size() >= 3u && left[0] == 0 && left[1] == 319 * 64 && left[2] == 261 * 64,
+        "ADPCM decodes with GBATEK's step table and index steps");
+    arm7.Write32(kChannelCnt + 0x20u, 0u);
+
+    // PSG 50% duty on channel 8: starts LOW, four LOW then four HIGH steps.
+    channel(8u, 0u, slow, 0u, 0u, kStart | kPsg | (3u << 24) | kFullVolume);
+    left = run(80u);
+    t.Expect(left.size() >= 4u && left[0] == 0 && left[1] == -32768 && left[2] == 32704 && left[3] == -32768,
+        "a PSG square wave alternates LOW and HIGH");
+    arm7.Write32(kChannelCnt + 0x80u, 0u);
+    channel(3u, 0u, slow, 0u, 0u, kStart | kPsg | kFullVolume);
+    t.Expect(run(20u) == std::vector<int16_t>({0}), "channels 0-7 have no PSG");
+    arm7.Write32(kChannelCnt + 0x30u, 0u);
+    channel(14u, 0u, slow, 0u, 0u, kStart | kPsg | kFullVolume);
+    left = run(20u);
+    t.Expect(left.size() >= 2u && left[1] == -32768, "noise starts from X=7FFFh, whose first output is LOW");
+    arm7.Write32(kChannelCnt + 0xE0u, 0u);
+
+    // Capture 0 records the left mixer as PCM16, at channel 1's timer rate.
+    channel(0u, 0x02000000u, slow, 1u, 3u, kStart | kLoop | kPcm16 | kFullVolume);
+    arm7.Write32(0x04000418u, slow);         // SOUND1TMR doubles as the capture 0 timer
+    arm7.Write32(0x04000510u, 0x02001000u);  // SNDCAP0DAD
+    arm7.Write32(0x04000514u, 4u);           // SNDCAP0LEN: 4 words
+    arm7.Write8(0x04000508u, 0x80u);         // start, left mixer, loop, PCM16
+    t.Expect(arm7.Read32(0x04000514u) == 0u && arm7.Read32(0x04000510u) == 0x02001000u,
+        "SNDCAPxDAD reads back, SNDCAPxLEN is write-only");
+    run(120u);
+    bool captured = false;
+    for (uint32_t i = 0u; i < 8u; ++i) {
+        captured = captured || arm7.Read16(0x02001000u + i * 2u) == 0x4000u;
+    }
+    t.Expect(captured && (arm7.Read8(0x04000508u) & 0x80u) != 0u, "capture writes the mixer output to memory and keeps looping");
+    arm7.Write8(0x04000508u, 0x84u);         // restart as one-shot
+    arm7.Write8(0x04000508u, 0x00u);
+    arm7.Write8(0x04000508u, 0x84u);
+    run(120u);
+    t.Expect((arm7.Read8(0x04000508u) & 0x80u) == 0u, "a one-shot capture clears busy when its buffer is full");
+
+    // Capture samples its source when its timer fires, not at the last output sample: a 512-cycle
+    // capture of channel 0 (64-cycle period, so its 3-sample start delay ends at cycle 192) records
+    // 4000h before the first output mix at cycle ~1023.
+    arm7.Write8(0x04000508u, 0x00u);
+    arm7.Write32(kChannelCnt, 0u);           // channel 0 silent for the last output mix before the capture
+    sound.ClearSamples();
+    sound.Advance(0x1000u);                  // line up just after an output sample
+    for (uint32_t i = 0u; i < 4u; ++i) {
+        arm7.Write32(0x02001000u + i * 4u, 0xFFFFFFFFu);
+    }
+    channel(0u, 0x02000000u, static_cast<uint16_t>(0x10000u - 32u), 1u, 3u, kStart | kLoop | kPcm16 | kFullVolume);
+    arm7.Write32(0x04000418u, 0x10000u - 256u); // capture 0 period: 512 cycles
+    arm7.Write8(0x04000508u, 0x82u);         // start, source channel 0, loop, PCM16
+    sound.ClearSamples();
+    sound.Advance(600u);
+    (void)arm7.Read8(0x04000508u);           // a sound register access brings the unit up to date
+    t.Expect(sound.samples().size() <= 2u && arm7.Read16(0x02001000u) == 0x4000u,
+        "capture records its source at the capture event, before any output mix");
+    arm7.Write8(0x04000508u, 0x00u);
+
+    arm7.Write16(0x04000500u, 0x007Fu); // master enable off
+    t.Expect(run(10u) == std::vector<int16_t>({0}), "SOUNDCNT master enable off silences the output");
+}
+
 void TestIndsGeometryAndWifiStubs(TestContext& t) {
     emugbds::inds::MemoryBus bus;
     auto& arm9 = bus.arm9();
@@ -3138,7 +3275,7 @@ int RunUnitTests() {
         void (*fn)(TestContext&);
     };
 
-    const std::array<NamedTest, 64> tests = {{
+    const std::array<NamedTest, 65> tests = {{
         {"frontend_settings", &TestFrontendSettings},
         {"arm_v5_clz_and_saturation", &TestArmV5ClzAndSaturation},
         {"arm_v5_halfword_multiplies", &TestArmV5HalfwordMultiplies},
@@ -3191,6 +3328,7 @@ int RunUnitTests() {
         {"inds_cartridge_reads", &TestIndsCartridgeReads},
         {"inds_backup_memory", &TestIndsBackupMemory},
         {"inds_geometry_and_wifi_stubs", &TestIndsGeometryAndWifiStubs},
+        {"inds_sound", &TestIndsSound},
         {"inds_math_unit", &TestIndsMathUnit},
         {"inds_rtc", &TestIndsRtc},
         {"inds_haltcnt_gba_mode_transition", &TestIndsHaltcntGbaModeTransition},

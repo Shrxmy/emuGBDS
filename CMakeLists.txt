@@ -85,6 +85,7 @@ set(EMUGBDS_INHOUSE_DS_SOURCES
     host/src/inds/GameCard.cpp
     host/src/inds/Backup.cpp
     host/src/inds/Wifi.cpp
+    host/src/inds/Sound.cpp
     host/src/inds/Spi.cpp
     host/src/inds/MathUnit.cpp
     host/src/inds/Rtc.cpp

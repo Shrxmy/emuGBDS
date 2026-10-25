@@ -147,6 +147,10 @@ bool RuntimeKernel::Tick(TickResult& result, std::string& error) {
         if (inhouse_ds->GetVideoFrame(frame)) {
             last_output_.video = frame;
         }
+        AudioChunk audio{};
+        if (inhouse_ds->GetAudioChunk(audio)) {
+            last_output_.audio = audio;
+        }
     }
     result.status = TickStatus::FrameAdvanced;
 

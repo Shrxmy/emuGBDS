@@ -4,7 +4,7 @@ Clean-room emulator host focused on in-house core development.
 
 Current state:
 - In-house GBA core scaffold (`ingba`) with incremental ARM execution support.
-- In-house DS core (`inds`) in bring-up: both CPUs, 2D video, input, cartridge and save chip, and the real BIOS/firmware handoff to GBA; no 3D or sound yet.
+- In-house DS core (`inds`) in bring-up: both CPUs, 2D video, input, cartridge and save chip, sound, and the real BIOS/firmware handoff to GBA; no 3D yet.
 - SDL2 + Dear ImGui app with menus, a ROM picker, settings, and debug panels.
 - Optional external melonDS adapter support behind `EMUGBDS_ENABLE_MELONDS`.
 

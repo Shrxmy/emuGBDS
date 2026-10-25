@@ -158,6 +158,18 @@ bool InHouseDsCoreAdapter::GetVideoFrame(runtime::VideoFrame& out_frame) const n
 }
 
 
+bool InHouseDsCoreAdapter::GetAudioChunk(runtime::AudioChunk& out_chunk) const noexcept {
+    if (!IsRunning() || core_->audio_samples().empty()) {
+        return false;
+    }
+    out_chunk.sample_rate = inds::Sound::kSampleRate;
+    out_chunk.channels = 2u;
+    out_chunk.samples = core_->audio_samples().data();
+    out_chunk.sample_count = core_->audio_samples().size();
+    return true;
+}
+
+
 std::optional<core::TransitionEvent> InHouseDsCoreAdapter::PollTransition() {
     return core_->PollTransition();
 }

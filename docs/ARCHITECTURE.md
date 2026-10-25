@@ -77,6 +77,7 @@ coordinate modules rather than grow new device implementations.
 | `GameCard.cpp` | Slot-1 card bus: ROM commands (B7h data, chip ID, header) after KEY2 decoding, card DMA, transfer IRQ |
 | `Backup.cpp` | cartridge save chip on AUXSPI (EEPROM 0.5K/8K/64K, FLASH), type from the save file or first write, `<rom>.sav` |
 | `Wifi.cpp` | ARM7 wifi stub: registers, Wifi RAM, baseband register file (no radio) |
+| `Sound.cpp` | 16 sound channels (PCM8/PCM16/IMA-ADPCM, PSG, noise) read from memory, mixer with SOUNDCNT routing, master volume and SOUNDBIAS, and both capture units; 32768 Hz stereo |
 | `Spi.cpp` | ARM7 SPI bus: firmware flash (in-memory copy), power management, touchscreen X/Y conversions |
 | `VideoMemory.cpp` | VRAM banks A-I and VRAMCNT mapping, palettes, OAM, extended palette slots |
 | `Engine2d.cpp` | one 2D engine: registers and a scanline renderer (BGs, OBJs, windows, blending, brightness) |

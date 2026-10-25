@@ -48,6 +48,8 @@ public:
     static constexpr uint32_t kScreenWidth = 256u;
     static constexpr uint32_t kScreenHeight = 192u;
     const uint32_t* frame_pixels() const noexcept { return frame_.data(); }
+    // Interleaved stereo samples at Sound::kSampleRate produced by the last RunFrame.
+    const std::vector<int16_t>& audio_samples() const noexcept { return bus_.io().sound().samples(); }
     // Input: held buttons as input::GbaKey bits (X in bit 10, Y in 11), and the pen on the
     // bottom screen in pixels; the touchscreen reports it through the firmware's calibration.
     void SetKeys(uint32_t held) noexcept { bus_.io().SetKeys(held); }

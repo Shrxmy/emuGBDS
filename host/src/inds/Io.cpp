@@ -39,7 +39,6 @@ constexpr uint32_t kMathFirst = 0x04000280u; // ARM9 divider and square root
 constexpr uint32_t kMathLast = 0x040002BCu;
 constexpr uint32_t kSoundFirst = 0x04000400u; // ARM7 sound channels, control, bias, capture
 constexpr uint32_t kSoundLast = 0x0400051Cu;
-constexpr uint32_t kSoundCaptureCnt = 0x04000508u;
 constexpr uint32_t kWifiFirst = 0x04800000u; // ARM7 wireless (registers and Wifi RAM)
 constexpr uint32_t kWifiLast = 0x0480FFFCu;
 constexpr uint32_t kGeometryFirst = 0x04000320u; // ARM9 3D registers, geometry FIFO and command ports
@@ -74,7 +73,7 @@ void Io::Reset() {
     math_.Reset();
     rtc_.Reset();
     wifi_.Reset();
-    sound_ = {};
+    sound_.Reset();
     dma_fill_ = {};
     exmem_shared_ = 0u;
     wifiwaitcnt_ = 0u;
@@ -144,7 +143,7 @@ bool Io::ReadWord(int cpu, uint32_t address, uint32_t mask, uint32_t& value) {
         return true;
     }
     if (cpu == 1 && address >= kSoundFirst && address <= kSoundLast) {
-        value = sound_[(address - kSoundFirst) / 4u];
+        value = sound_.ReadWord(address - kSoundFirst);
         return true;
     }
     switch (address) {
@@ -262,13 +261,7 @@ bool Io::WriteWord(int cpu, uint32_t address, uint32_t value, uint32_t mask) {
         return true;
     }
     if (cpu == 1 && address >= kSoundFirst && address <= kSoundLast) {
-        uint32_t& word = sound_[(address - kSoundFirst) / 4u];
-        word = Merge(word, value, mask);
-        if (address < kSoundFirst + 0x100u && (address & 0xFu) == 0u) {
-            word &= ~(1u << 31); // SOUNDxCNT start/busy
-        } else if (address == kSoundCaptureCnt) {
-            word &= ~0x8080u;    // SNDCAPxCNT start/busy
-        }
+        sound_.WriteWord(address - kSoundFirst, value, mask);
         return true;
     }
     switch (address) {

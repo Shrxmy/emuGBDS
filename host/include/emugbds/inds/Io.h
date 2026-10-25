@@ -10,6 +10,7 @@
 #include "emugbds/inds/Ipc.h"
 #include "emugbds/inds/MathUnit.h"
 #include "emugbds/inds/Rtc.h"
+#include "emugbds/inds/Sound.h"
 #include "emugbds/inds/Spi.h"
 #include "emugbds/inds/Timers.h"
 #include "emugbds/inds/Wifi.h"
@@ -59,6 +60,8 @@ public:
     uint16_t vcount() const noexcept { return vcount_; }
     uint16_t powcnt(int cpu) const noexcept { return cpus_[cpu].powcnt; }
     GameCard& card() noexcept { return card_; }
+    Sound& sound() noexcept { return sound_; }
+    const Sound& sound() const noexcept { return sound_; }
     // Held buttons as input::GbaKey bits (A..L in bits 0-9, X in 10, Y in 11).
     void SetKeys(uint32_t held) noexcept { held_keys_ = held; }
     void SetTouch(bool down, uint16_t adc_x, uint16_t adc_y) noexcept {
@@ -122,9 +125,7 @@ private:
     MathUnit math_{};
     Rtc rtc_{};
     Wifi wifi_{};
-    // ARM7 sound registers 400h-51Fh.
-    // shortcut: plain storage; channels and capture finish at once (busy bits clear) until DS audio exists.
-    std::array<uint32_t, 0x48> sound_{};
+    Sound sound_{memory_}; // ARM7 sound registers 400h-51Fh
     std::array<uint32_t, 4> dma_fill_{};      // ARM9 DMA fill data (40000E0h-40000EFh)
     uint16_t exmem_shared_ = 0;               // EXMEMCNT bits 7-15, set by the ARM9 only
     uint16_t wifiwaitcnt_ = 0;

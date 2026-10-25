@@ -25,6 +25,7 @@ public:
     void ApplyInput(const runtime::InputSnapshot& input) noexcept;
     // Both screens stacked (top, then bottom).
     bool GetVideoFrame(runtime::VideoFrame& out_frame) const noexcept;
+    bool GetAudioChunk(runtime::AudioChunk& out_chunk) const noexcept;
 
     // Read-only view for bring-up diagnostics.
     const inds::Core& core() const noexcept { return *core_; }

@@ -43,9 +43,11 @@ Goal: progress from scaffold to executable ARM9/ARM7 instruction core.
 5. Done: commercial DS games boot to their menus (cartridge reads, save chip
    with `.sav` files, wifi stub, 3D status stub). Shadow Dragon plays its menus
    and story scenes.
-6. Next: the 3D engine (needed by Devil Survivor and many others), DS sound,
-   and DS speed (below 60 fps).
-7. Keep Slot-2 transition support as an integration target.
+6. Done: DS sound (all channel formats, mixer, capture), paced in real time
+   through the audio queue.
+7. Next: the 3D engine (needed by Devil Survivor and many others), and DS
+   speed (headless runs are only just above 60 fps).
+8. Keep Slot-2 transition support as an integration target.
 
 ## Phase 4: Runtime and Tooling
 

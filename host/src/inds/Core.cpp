@@ -181,6 +181,7 @@ bool Core::RunFrame(std::string& error) {
         return false;
     }
 
+    bus_.io().sound().ClearSamples();
     if (cpus_active_) {
         arm9_.set_trace_frame(frame_counter_);
         arm7_.set_trace_frame(frame_counter_);
@@ -210,6 +211,7 @@ bool Core::RunFrame(std::string& error) {
             // shortcut: timers advance once per slice with their end-of-slice settings, so starting or
             // stopping one mid-slice is off by up to kSliceCycles; sync on timer access if a game needs it.
             io.AdvanceTimers(slice);
+            io.sound().Advance(slice);
             AdvanceLcd(done, done + slice);
         }
     }
@@ -440,6 +442,7 @@ bool Core::DirectBoot(std::string& error) {
     bus_.arm9().Write32(0x027FF880u, 7u);      // boot handshake values at cart boot time
     bus_.arm9().Write32(0x027FF884u, 6u);
     bus_.arm9().Write16(0x027FFC40u, 1u);      // boot indicator: normal cartridge boot
+    bus_.arm7().Write16(0x04000504u, 0x200u);  // SOUNDBIAS: the boot menu leaves it at the 200h midpoint
     const std::vector<uint8_t>& firmware = bus_.firmware_image();
     if (const size_t user = CurrentUserSettings(firmware)) { // current user settings copy at 27FFC80h
         for (uint32_t i = 0u; i < 0x70u; ++i) {
