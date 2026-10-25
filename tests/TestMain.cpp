@@ -14,7 +14,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
@@ -1236,21 +1238,152 @@ void TestIngbaApuFifoMixing(TestContext& t) {
     constexpr uint16_t kAOnTimer0BOnTimer1 = 0x4304u; // A: 100%, left+right, timer 0. B: timer 1, muted.
     apu.WriteFifo(0u, 0x40u);
     t.Expect(apu.OnTimerOverflow(0u, kAOnTimer0BOnTimer1) == 0x1u, "ingba APU requests a FIFO A refill when low");
-    apu.Advance(512u, kAOnTimer0BOnTimer1, 0x0080u);
+    apu.Advance(512u, 0u, kAOnTimer0BOnTimer1, 0x0080u);
     t.Expect(apu.samples().size() == 2u, "ingba APU emits one stereo sample per 512 cycles");
     t.Expect(apu.samples()[0] == 64 * 4 * 64 && apu.samples()[1] == 64 * 4 * 64, "ingba APU scales a 100% FIFO sample");
     apu.ClearSamples();
-    apu.Advance(512u, 0x4300u, 0x0080u);
+    apu.Advance(512u, 0u, 0x4300u, 0x0080u);
     t.Expect(apu.samples()[0] == 64 * 2 * 64, "ingba APU halves a 50% FIFO sample");
     apu.ClearSamples();
-    apu.Advance(512u, kAOnTimer0BOnTimer1, 0x0000u);
+    apu.Advance(512u, 0u, kAOnTimer0BOnTimer1, 0x0000u);
     t.Expect(apu.samples()[0] == 0, "ingba APU is silent when the master enable is off");
     apu.ClearSamples();
     apu.WriteFifo(0u, 0x7Fu);
     apu.WriteFifo(1u, 0x7Fu);
     apu.OnTimerOverflow(0u, 0x330Cu); // A and B on timer 0, both 100%, both sides.
-    apu.Advance(512u, 0x330Cu, 0x0080u);
+    apu.Advance(512u, 0u, 0x330Cu, 0x0080u);
     t.Expect(apu.samples()[0] == 0x1FF * 64, "ingba APU clips the mixed output to the 10-bit range");
+}
+
+void TestIngbaApuPsg(TestContext& t) {
+    using emugbds::ingba::Apu;
+    constexpr uint16_t kSoundCntH = 0x0002u; // PSG at 100%
+    constexpr uint16_t kMasterOn = 0x0080u;
+    // Left outputs over `samples` output samples.
+    const auto run = [&](Apu& apu, uint16_t soundcnt_l, uint32_t samples) {
+        apu.ClearSamples();
+        apu.Advance(samples * Apu::kCyclesPerSample, soundcnt_l, kSoundCntH, kMasterOn);
+        std::vector<int16_t> left;
+        for (size_t i = 0u; i < apu.samples().size(); i += 2u) {
+            left.push_back(apu.samples()[i]);
+        }
+        return left;
+    };
+    // The DC blocker (output capacitor) lets levels droop slightly, so compare within 3%.
+    const auto near = [](int32_t value, int32_t expected) {
+        return std::abs(value - expected) <= std::abs(expected) * 3 / 100 + 1;
+    };
+    // One channel at volume 15, master volume 7 (x8), 100%: +/-120 of the 10-bit range = +/-7680 PCM.
+    constexpr int16_t kHigh = 120 * 64;
+    // Channel 2: 50% duty, n = 1984 -> 1024 cycles per duty step (2 output samples).
+    const auto square = [](uint8_t envelope) {
+        Apu apu;
+        apu.Reset();
+        apu.WritePsg(0x04000068u, 0x80u);    // NR21: 50% duty, length 64
+        apu.WritePsg(0x04000069u, envelope); // NR22
+        apu.WritePsg(0x0400006Cu, 0xC0u);    // NR23
+        apu.WritePsg(0x0400006Du, 0x87u);    // NR24: trigger, frequency high bits 7
+        return apu;
+    };
+
+    Apu tone = square(0xF0u);                // volume 15, no envelope
+    t.Expect(tone.active_channels() == 0x2u, "a triggered square channel reports itself on");
+    std::vector<int16_t> left = run(tone, 0x2277u, 16u); // ch2 on both sides, master 7/7
+    t.Expect(left.size() == 16u && near(left[0], kHigh) && near(left[7], kHigh) && near(left[8], -kHigh) &&
+        near(left[15], -kHigh), "a 50% square wave is high for 4 duty steps, then low for 4");
+    Apu muted = square(0xF0u);
+    t.Expect(run(muted, 0x0077u, 4u) == std::vector<int16_t>(4u, 0), "SOUNDCNT_L enable bits route the PSG");
+    Apu quiet = square(0xF0u);
+    t.Expect(near(run(quiet, 0x2207u, 1u)[0], 15 * 64), "master volume 0 still passes 1/8 of the level");
+
+    // Length: 63 -> one 256 Hz length clock, then the channel stops.
+    tone.WritePsg(0x04000068u, 0xBFu);       // 50% duty, length 63
+    tone.WritePsg(0x0400006Du, 0xC7u);       // trigger with length enabled
+    run(tone, 0x2277u, 64u * 2u + 4u);       // past the first length clock (64 samples per 512 Hz step)
+    t.Expect(tone.active_channels() == 0u, "an expired length stops the channel and clears its on flag");
+    tone.WritePsg(0x04000068u, 0xBFu);       // length 63 loaded while the channel is off
+    tone.WritePsg(0x0400006Du, 0x47u);       // length enabled, no trigger
+    run(tone, 0x2277u, 64u * 2u + 4u);       // the counter still runs out
+    tone.WritePsg(0x0400006Du, 0xC7u);       // trigger: an expired counter reloads to 64
+    run(tone, 0x2277u, 64u * 2u + 4u);
+    t.Expect(tone.active_channels() == 0x2u, "length counts while a channel is off, so a later trigger gets a full length");
+
+    // Channel 3 plays the bank NR30 selects; the CPU reads and writes the other one.
+    Apu wave;
+    wave.Reset();
+    wave.WritePsg(0x04000070u, 0x40u);       // play bank 1, so the CPU sees bank 0
+    for (uint32_t i = 0u; i < 16u; ++i) {
+        wave.WriteWave(i, 0xF0u);            // digits F,0,F,0...
+    }
+    t.Expect(wave.ReadWave(0u) == 0xF0u, "wave RAM reads back the CPU's bank");
+    wave.WritePsg(0x04000070u, 0x80u);       // play bank 0
+    t.Expect(wave.ReadWave(0u) == 0x00u, "switching banks shows the CPU the other bank");
+    wave.WritePsg(0x04000073u, 0x20u);       // NR32: 100%
+    wave.WritePsg(0x04000074u, 0x80u);       // NR33: n = 1920 -> 1024 cycles per digit
+    wave.WritePsg(0x04000075u, 0x87u);       // NR34: trigger
+    left = run(wave, 0x4477u, 8u);
+    t.Expect(left.size() == 8u && near(left[0], kHigh) && near(left[1], kHigh) && near(left[2], -kHigh) &&
+        near(left[4], kHigh), "the wave channel plays high nibbles first, digit 15 as +15 and 0 as -15");
+    Apu quarter;
+    quarter.Reset();
+    quarter.WritePsg(0x04000070u, 0x40u);
+    for (uint32_t i = 0u; i < 16u; ++i) {
+        quarter.WriteWave(i, 0xF0u);
+    }
+    quarter.WritePsg(0x04000070u, 0x80u);
+    quarter.WritePsg(0x04000073u, 0x60u);    // 25%
+    quarter.WritePsg(0x04000074u, 0x80u);
+    quarter.WritePsg(0x04000075u, 0x87u);
+    t.Expect(near(run(quarter, 0x4477u, 1u)[0], (15 / 4) * 8 * 64), "wave volume 25% shifts the digits down");
+
+    // Noise: X starts at 4000h; the first steps shift out zeros (LOW).
+    Apu noise;
+    noise.Reset();
+    noise.WritePsg(0x04000079u, 0xF0u);      // NR42: volume 15
+    noise.WritePsg(0x0400007Cu, 0x40u);      // r=0, s=4: 16 << 5 = 512 cycles per step (one output sample)
+    noise.WritePsg(0x0400007Du, 0x80u);      // trigger
+    left = run(noise, 0x8877u, 1u);
+    t.Expect(noise.active_channels() == 0x8u && near(left[0], -kHigh), "15-bit noise starts LOW from X=4000h");
+
+    // Envelope: volume 1, rising one step every 1/64 s (step 7 of the 512 Hz sequencer).
+    Apu envelope = square(0x19u);            // volume 1, increase, step time 1
+    const int16_t before = run(envelope, 0x2277u, 1u)[0];
+    run(envelope, 0x2277u, 512u);            // one full 64 Hz envelope period
+    const int16_t after = run(envelope, 0x2277u, 1u)[0];
+    // The volume steps mid-wave, so the DC blocker shifts the level briefly: check it rose toward double.
+    t.Expect(near(before, 8 * 64) && after > before * 3 / 2 && after <= 2 * 8 * 64 + 1 && envelope.active_channels() == 0x2u,
+        "the envelope starts at its initial volume and rises one step per 1/64 s");
+
+    // A 12.5% duty wave has a DC offset (it sits low 7/8 of the time); the output capacitor removes it.
+    Apu narrow;
+    narrow.Reset();
+    narrow.WritePsg(0x04000068u, 0x00u);     // 12.5% duty
+    narrow.WritePsg(0x04000069u, 0xF0u);
+    narrow.WritePsg(0x0400006Cu, 0xC0u);
+    narrow.WritePsg(0x0400006Du, 0x87u);
+    run(narrow, 0x2277u, 32768u);            // one second
+    left = run(narrow, 0x2277u, 1600u);      // 100 periods of 16 samples
+    double mean = 0.0;
+    for (const int16_t value : left) {
+        mean += value;
+    }
+    mean /= static_cast<double>(left.size());
+    t.Expect(std::abs(mean) < 100.0, "the PSG output settles around zero (DC blocked)");
+
+    // The bus: PSG registers mask write-only bits, report on flags, and clear while sound is off.
+    emugbds::ingba::MemoryBus bus;
+    bus.Write8(0x04000068u, 0xBFu);
+    t.Expect(bus.Read8(0x04000068u) == 0u, "PSG writes are ignored while SOUNDCNT_X bit 7 is off");
+    bus.Write8(0x04000084u, 0x80u);
+    bus.Write8(0x04000068u, 0xBFu);
+    bus.Write8(0x04000069u, 0xF0u);
+    bus.Write8(0x0400006Du, 0x87u);
+    t.Expect(bus.Read8(0x04000068u) == 0x80u && bus.Read8(0x0400006Du) == 0x00u,
+        "length, frequency and trigger bits read back as zero");
+    t.Expect(bus.Read8(0x04000084u) == 0x82u, "SOUNDCNT_X reports channel 2 on");
+    bus.Write8(0x04000084u, 0x00u);
+    t.Expect(bus.Read8(0x04000069u) == 0u && bus.Read8(0x04000084u) == 0u,
+        "turning sound off clears the PSG registers and stops the channels");
 }
 
 void TestIngbaSoundDmaRefillsFifo(TestContext& t) {
@@ -3470,7 +3603,7 @@ int RunUnitTests() {
         void (*fn)(TestContext&);
     };
 
-    const std::array<NamedTest, 67> tests = {{
+    const std::array<NamedTest, 68> tests = {{
         {"frontend_settings", &TestFrontendSettings},
         {"arm_v5_clz_and_saturation", &TestArmV5ClzAndSaturation},
         {"arm_v5_halfword_multiplies", &TestArmV5HalfwordMultiplies},
@@ -3486,6 +3619,7 @@ int RunUnitTests() {
         {"ingba_irq_wakes_halt", &TestIngbaIrqWakesHalt},
         {"ingba_halt_wakes_with_masked_irq", &TestIngbaHaltWakesWithMaskedIrq},
         {"ingba_apu_fifo_mixing", &TestIngbaApuFifoMixing},
+        {"ingba_apu_psg", &TestIngbaApuPsg},
         {"ingba_sound_dma_refills_fifo", &TestIngbaSoundDmaRefillsFifo},
         {"ingba_dma_latches_count_on_enable", &TestIngbaDmaLatchesCountOnEnable},
         {"ingba_timer_wakes_halt_promptly", &TestIngbaTimerWakesHaltPromptly},

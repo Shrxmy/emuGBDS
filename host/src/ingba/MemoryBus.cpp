@@ -11,6 +11,14 @@ namespace {
 // Timer prescalers 1/64/256/1024 as shifts; timers advance once per CPU step.
 constexpr std::array<uint32_t, 4u> kPrescalerShifts = {0u, 6u, 8u, 10u};
 
+// Readable bits of 4000060h-4000081h; lengths, frequencies and trigger bits are write-only (GBATEK).
+constexpr std::array<uint8_t, 0x22u> kPsgReadMask = {
+    0x7Fu, 0x00u, 0xC0u, 0xFFu, 0x00u, 0x40u, 0x00u, 0x00u, // NR10, NR11/12, NR13/14
+    0xC0u, 0xFFu, 0x00u, 0x00u, 0x00u, 0x40u, 0x00u, 0x00u, // NR21/22, NR23/24
+    0xE0u, 0x00u, 0x00u, 0xE0u, 0x00u, 0x40u, 0x00u, 0x00u, // NR30, NR31/32, NR33/34
+    0x00u, 0xFFu, 0x00u, 0x00u, 0xFFu, 0x40u, 0x00u, 0x00u, // NR41/42, NR43/44
+    0x77u, 0xFFu};                                          // NR50/51
+
 } // namespace
 
 bool MemoryBus::LoadBios(const std::filesystem::path& bios_path, std::string& error) {
@@ -207,7 +215,8 @@ void MemoryBus::AdvanceTimers(uint32_t cycles) {
 
     // Sample before the timers move: callers never step past a timer overflow,
     // so FIFO output levels are constant across these cycles.
-    apu_.Advance(cycles, ReadIo16Direct(kSoundCntHAddress), ReadIo16Direct(kSoundCntXAddress));
+    apu_.Advance(cycles, ReadIo16Direct(kSoundCntLAddress), ReadIo16Direct(kSoundCntHAddress),
+        ReadIo16Direct(kSoundCntXAddress));
     for (uint32_t timer = 0u; timer < timer_counters_.size(); ++timer) {
         const uint16_t control = timer_control_[timer];
         if ((control & 0x0080u) == 0u || (control & 0x0004u) != 0u) {
@@ -437,6 +446,15 @@ uint8_t MemoryBus::Read8(uint32_t address) const {
         if (address == kWaitCntAddress + 1u) {
             return static_cast<uint8_t>((waitcnt_ >> 8u) & 0xFFu);
         }
+        if (address >= kPsgFirstAddress && address <= kPsgLastAddress) {
+            return static_cast<uint8_t>(io_[address - kIoBase] & kPsgReadMask[address - kPsgFirstAddress]);
+        }
+        if (address == kSoundCntXAddress) {
+            return static_cast<uint8_t>((io_[address - kIoBase] & 0x80u) | apu_.active_channels());
+        }
+        if (address >= kWaveRamAddress && address < kWaveRamAddress + 16u) {
+            return apu_.ReadWave(address - kWaveRamAddress);
+        }
         return io_[address - kIoBase];
     }
     if (address >= kPaletteBase && address < kPaletteBase + 0x01000000u) {
@@ -639,6 +657,27 @@ void MemoryBus::Write8(uint32_t address, uint8_t value) {
 
         if (address >= kFifoAAddress && address < kFifoBAddress + 4u) {
             apu_.WriteFifo((address - kFifoAAddress) / 4u, value);
+            return;
+        }
+        if (address >= kPsgFirstAddress && address <= kPsgLastAddress) {
+            if ((io_[kSoundCntXAddress - kIoBase] & 0x80u) == 0u) {
+                return; // the PSG registers stay zero while sound is off (SOUNDCNT_X bit 7)
+            }
+            io_[address - kIoBase] = value;
+            apu_.WritePsg(address, value);
+            return;
+        }
+        if (address >= kWaveRamAddress && address < kWaveRamAddress + 16u) {
+            apu_.WriteWave(address - kWaveRamAddress, value);
+            return;
+        }
+        if (address == kSoundCntXAddress) {
+            const bool was_on = (io_[address - kIoBase] & 0x80u) != 0u;
+            io_[address - kIoBase] = static_cast<uint8_t>(value & 0x80u); // bits 0-3 are read-only status
+            if (was_on && (value & 0x80u) == 0u) {
+                std::fill(io_.begin() + (kPsgFirstAddress - kIoBase), io_.begin() + (kPsgLastAddress + 1u - kIoBase), 0u);
+                apu_.PowerOffPsg();
+            }
             return;
         }
         if (address == kSoundCntHAddress + 1u) {

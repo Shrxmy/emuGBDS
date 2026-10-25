@@ -61,7 +61,7 @@ decoding is unaffected.
 | `Backup.cpp` | cartridge save chip picked from the ROM ID string: SRAM/FRAM, FLASH 64K/128K, EEPROM over DMA3; `<rom>.sav` files |
 | `CartRtc.cpp` | cartridge real-time clock on the ROM GPIO port (80000C4h), following the host clock |
 | `Video.cpp` | LCD timing and video composition |
-| `Apu.cpp` | Direct Sound FIFOs and 32768 Hz stereo mixing (PSG channels not yet implemented) |
+| `Apu.cpp` | PSG channels 1-4 (square + sweep, square, wave RAM, noise; length/envelope/sweep sequencer), Direct Sound FIFOs, and 32768 Hz stereo mixing |
 | `*Constants.h` | focused internal constants/helpers; not public API |
 
 New behavior should be placed in the narrowest owning module. `Core.cpp` should
