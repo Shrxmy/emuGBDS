@@ -1,25 +1,30 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
-- App icon: the crystal and cartridges artwork (`assets/branding`), on the exe and the window.
-- CPU timing: instructions now take their real cycle counts (memory waitstates,
-  WAITCNT, multiplies, branches) on the GBA and on both DS CPUs, instead of one
-  cycle each. DS boot and menu transitions stutter far less.
-- DS: a GBA cartridge can sit in Slot-2 (File > Slot-2 cartridge) and keeps its save;
-  firmware settings are saved to `<firmware>.sav`.
-- DS menu with both slots: File > Slot-1 card and Slot-2 cartridge pick the cartridges, and
-  File > Start DS menu boots the real DS menu, which can start either one (the NDS card goes
-  through the cartridge's KEY1 encryption stage, as on hardware). Also `--ds-menu` on the
-  command line. An empty Slot-2 now reads as empty instead of as a DS Option Pak.
-- DS 3D engine: geometry commands, matrices, lighting, clipping, textures in all formats,
-  toon/highlight shading, translucency, and the rear plane, shown as BG0 and usable by display
-  capture. Games that draw with 3D (e.g. Devil Survivor) now show their graphics. Not yet: fog,
-  edge marking, anti-aliasing, and shadow polygons.
-- DS display capture: games that swap screens every frame to show both screens no longer strobe.
-- Faster: DS 2D rendering, the CPUs' memory access, and (on hybrid CPUs) the emulator stays on
-  the performance cores; busy DS menu transitions no longer stall.
+DS
+- 3D engine: geometry commands and geometry DMA, matrices, lighting, clipping, textures in all
+  formats, toon/highlight shading, translucency, and the rear plane, shown as BG0 and usable by
+  display capture. Games that draw with 3D (e.g. Devil Survivor) now show their graphics. Not
+  yet: fog, edge marking, anti-aliasing, and shadow polygons.
+- Display capture: games that swap screens every frame to fill both screens no longer strobe.
+- The real DS menu with both slots: File > Slot-1 card and Slot-2 cartridge pick the
+  cartridges, and File > Start DS menu boots the menu, which starts either one (the card goes
+  through the cartridge's KEY1 encryption stage, as on hardware). Also `--ds-menu`. An empty
+  Slot-2 now reads as empty instead of as a DS Option Pak.
+- A GBA cartridge can sit in Slot-2 and keeps its save; firmware settings are saved to
+  `<firmware>.sav`.
+- Fixed a crash when the DS menu starts the Slot-2 GBA game.
+
+GBA and DS
+- CPU timing: instructions take their real cycle counts (memory waitstates, WAITCNT, multiplies,
+  branches) instead of one cycle each.
+- Faster: DS 2D rendering and the CPUs' memory access; on CPUs with performance and efficiency
+  cores the emulator stays on the performance cores. Busy DS menu transitions no longer stall.
 - Lower memory use: exact-size ROM loads, and each core is allocated only when used.
+
+App
+- Application icon (`assets/branding`).
 
 ## 0.2.0
 

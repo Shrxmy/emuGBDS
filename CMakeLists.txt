@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 # The one place the version lives: shown by --version, the window title, and Help > About.
-project(emuGBDS VERSION 0.2.0 LANGUAGES C CXX)
+project(emuGBDS VERSION 0.3.0 LANGUAGES C CXX)
 
 # Link the C runtime statically so the released exe runs without the VC++ redistributable.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

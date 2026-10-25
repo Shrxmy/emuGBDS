@@ -2,11 +2,11 @@
 
 Clean-room emulator host focused on in-house core development.
 
-Version 0.2.0 (`emugbds --version`; set in `CMakeLists.txt` `project()`).
+Version 0.3.0 (`emugbds --version`; set in `CMakeLists.txt` `project()`).
 
 Current state:
 - In-house GBA core scaffold (`ingba`) with incremental ARM execution support.
-- In-house DS core (`inds`) in bring-up: both CPUs, 2D video, input, cartridge and save chip, sound, and the real BIOS/firmware handoff to GBA; no 3D yet.
+- In-house DS core (`inds`) in bring-up: both CPUs with cycle timing, 2D and 3D video, display capture, input, cartridge and save chip, sound, and the real BIOS/firmware: the DS menu boots the Slot-1 card or the Slot-2 GBA cartridge.
 - SDL2 + Dear ImGui app with menus, a ROM picker, settings, and debug panels.
 - Optional external melonDS adapter support behind `EMUGBDS_ENABLE_MELONDS`.
 
@@ -77,7 +77,14 @@ In-house DS game (direct boot; saves go to `<rom>.sav` next to the ROM):
 .\build\Release\emugbds.exe --mode ds --nds .\roms\Fire_Emblem_Shadow_Dragon.nds --interactive
 ```
 
-DS games that draw with the 3D engine show nothing in that layer yet.
+The real DS menu, with a card in Slot-1 and a GBA cartridge in Slot-2 (needs the DS BIOS
+files and firmware; in the app: File > Slot-1 card, File > Slot-2 cartridge, File > Start DS menu):
+
+```powershell
+.\build\Release\emugbds.exe --ds-menu --nds .\roms\Fire_Emblem_Shadow_Dragon.nds --slot2 .\roms\Fire_Emblem.gba
+```
+
+The 3D engine does not do fog, edge marking, anti-aliasing, or shadow polygons yet.
 
 DS firmware menu with a GBA game in Slot-2 (no `.nds` inserted). With
 `bios/nds-bios/biosnds7.bin`, `biosnds9.bin`, and `dsfirmware.bin` present, the
