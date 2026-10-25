@@ -25,6 +25,8 @@ public:
     void WriteWord(uint32_t offset, uint32_t value, uint32_t mask) noexcept;
     // Renders line y (0-191) into ABGR8888 pixels; `enabled` is the engine's POWCNT1 bit.
     void RenderLine(uint32_t y, bool enabled, uint32_t* out) noexcept;
+    // Debug: layers to leave out (bits 0-3 BG0-BG3, bit 4 OBJ); kept across Reset.
+    void set_hidden_layers(uint8_t mask) noexcept { hidden_layers_ = mask; }
 
 private:
     struct ObjPixel {
@@ -52,6 +54,7 @@ private:
 
     VideoMemory& memory_;
     int engine_;
+    uint8_t hidden_layers_ = 0;
     std::array<uint8_t, kRegisterBytes> regs_{};
     std::array<int32_t, 2> ref_x_{}; // BG2/BG3 internal affine reference points
     std::array<int32_t, 2> ref_y_{};

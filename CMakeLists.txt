@@ -94,8 +94,15 @@ set(EMUGBDS_INHOUSE_DS_SOURCES
     host/src/inds/Timers.cpp
 )
 
+# The interactive app's settings file and session wrapper (no SDL needed).
+set(EMUGBDS_FRONTEND_SOURCES
+    host/src/frontend/Session.cpp
+    host/src/frontend/Settings.cpp
+)
+
 add_executable(emugbds
     host/src/main.cpp
+    ${EMUGBDS_FRONTEND_SOURCES}
     host/src/core/ModeCoordinator.cpp
     host/src/runtime/RuntimeKernel.cpp
     host/src/boot/BootPolicy.cpp
@@ -126,8 +133,25 @@ else()
 endif()
 
 if(SDL2_FOUND)
+    # Dear ImGui (vendored, MIT) draws the menus and panels inside the SDL window.
+    set(EMUGBDS_IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/host/third_party/imgui")
+    add_library(emugbds_imgui STATIC
+        ${EMUGBDS_IMGUI_DIR}/imgui.cpp
+        ${EMUGBDS_IMGUI_DIR}/imgui_draw.cpp
+        ${EMUGBDS_IMGUI_DIR}/imgui_tables.cpp
+        ${EMUGBDS_IMGUI_DIR}/imgui_widgets.cpp
+        ${EMUGBDS_IMGUI_DIR}/backends/imgui_impl_sdl2.cpp
+        ${EMUGBDS_IMGUI_DIR}/backends/imgui_impl_sdlrenderer2.cpp
+    )
+    target_include_directories(emugbds_imgui PUBLIC "${EMUGBDS_IMGUI_DIR}" "${EMUGBDS_IMGUI_DIR}/backends")
+    target_link_libraries(emugbds_imgui PUBLIC ${EMUGBDS_SDL2_TARGET})
+
+    target_sources(emugbds PRIVATE
+        host/src/frontend/App.cpp
+        host/src/frontend/FileBrowser.cpp
+    )
     target_compile_definitions(emugbds PRIVATE EMUGBDS_HAS_SDL2=1)
-    target_link_libraries(emugbds PRIVATE ${EMUGBDS_SDL2_TARGET})
+    target_link_libraries(emugbds PRIVATE emugbds_imgui ${EMUGBDS_SDL2_TARGET})
     if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/sdl/SDL2.dll")
         add_custom_command(TARGET emugbds POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -145,6 +169,7 @@ endif()
 if(BUILD_TESTING)
     add_executable(emugbds_tests
         tests/TestMain.cpp
+        host/src/frontend/Settings.cpp
         host/src/runtime/RuntimeKernel.cpp
         host/src/cores/InHouseDsCoreAdapter.cpp
         host/src/cores/InHouseGbaCoreAdapter.cpp

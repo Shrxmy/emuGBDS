@@ -1,11 +1,7 @@
 #include "emugbds/boot/BootPolicy.h"
-#include "emugbds/cores/InHouseDsCoreAdapter.h"
-#include "emugbds/cores/InHouseGbaCoreAdapter.h"
-#include "emugbds/input/GbaKeys.h"
-#include "emugbds/runtime/RuntimeKernel.h"
+#include "emugbds/frontend/Session.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <iomanip>
@@ -13,13 +9,11 @@
 #include <map>
 #include <memory>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
 #if EMUGBDS_HAS_SDL2
-#define SDL_MAIN_HANDLED
-#include <SDL.h>
+#include "frontend/App.h"
 #endif
 
 namespace {
@@ -44,7 +38,8 @@ void PrintUsage() {
     std::cout
         << "emuGBDS - unified DS/GBA host prototype\n"
         << "Usage:\n"
-        << "  emugbds [--mode auto|ds|gba] [--gba-core auto|internal] [--nds <rom.nds>] [--gba <rom.gba>] [--slot2 <rom.gba>] [--bios-gba <bios.bin>] [--no-bios-gba] [--bios-nds7 <biosnds7.bin>] [--bios-nds9 <biosnds9.bin>] [--firmware-nds <firmware.bin>] [--boot-mode auto|ds-firmware|direct] [--trace-transition] [--frames N] [--interactive] [--uncapped] [--debug-stats]\n";
+        << "  emugbds [--mode auto|ds|gba] [--gba-core auto|internal] [--nds <rom.nds>] [--gba <rom.gba>] [--slot2 <rom.gba>] [--bios-gba <bios.bin>] [--no-bios-gba] [--bios-nds7 <biosnds7.bin>] [--bios-nds9 <biosnds9.bin>] [--firmware-nds <firmware.bin>] [--boot-mode auto|ds-firmware|direct] [--trace-transition] [--frames N] [--interactive] [--uncapped] [--debug-stats] [rom.gba|rom.nds]\n"
+        << "Without --frames the window opens (with --frames N it runs N frames headless, unless --interactive).\n";
 }
 
 bool ParseMode(const std::string& text, emugbds::core::ModeHint& out_mode) {
@@ -244,272 +239,6 @@ bool ParseArgs(int argc, char** argv, CliOptions& options, std::string& error) {
     return true;
 }
 
-#if EMUGBDS_HAS_SDL2
-uint32_t KeyMaskFromScancode(SDL_Scancode scancode) {
-    using emugbds::input::GbaKey;
-    using emugbds::input::GbaKeyMask;
-    switch (scancode) {
-    case SDL_SCANCODE_Z:
-        return GbaKeyMask(GbaKey::A);
-    case SDL_SCANCODE_X:
-        return GbaKeyMask(GbaKey::B);
-    case SDL_SCANCODE_RETURN:
-        return GbaKeyMask(GbaKey::Start);
-    case SDL_SCANCODE_RSHIFT:
-        return GbaKeyMask(GbaKey::Select);
-    case SDL_SCANCODE_RIGHT:
-        return GbaKeyMask(GbaKey::Right);
-    case SDL_SCANCODE_LEFT:
-        return GbaKeyMask(GbaKey::Left);
-    case SDL_SCANCODE_UP:
-        return GbaKeyMask(GbaKey::Up);
-    case SDL_SCANCODE_DOWN:
-        return GbaKeyMask(GbaKey::Down);
-    case SDL_SCANCODE_A:
-        return GbaKeyMask(GbaKey::L);
-    case SDL_SCANCODE_S:
-        return GbaKeyMask(GbaKey::R);
-    case SDL_SCANCODE_D:
-        return GbaKeyMask(GbaKey::X);
-    case SDL_SCANCODE_C:
-        return GbaKeyMask(GbaKey::Y);
-    default:
-        return 0u;
-    }
-}
-#endif
-
-bool RunInteractive(
-    emugbds::runtime::RuntimeKernel& kernel,
-    const CliOptions& options,
-    uint64_t& executed_frames,
-    std::string& error) {
-#if !EMUGBDS_HAS_SDL2
-    (void)kernel;
-    (void)options;
-    (void)executed_frames;
-    error = "Interactive mode requested but SDL2 support is not enabled in this build";
-    return false;
-#else
-    executed_frames = 0;
-
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
-        error = std::string("SDL_Init failed: ") + SDL_GetError();
-        return false;
-    }
-
-    SDL_Window* window = SDL_CreateWindow(
-        "emuGBDS",
-        SDL_WINDOWPOS_CENTERED,
-        SDL_WINDOWPOS_CENTERED,
-        240 * 3,
-        160 * 3,
-        SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
-    if (!window) {
-        error = std::string("SDL_CreateWindow failed: ") + SDL_GetError();
-        SDL_Quit();
-        return false;
-    }
-
-    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-    if (!renderer) {
-        error = std::string("SDL_CreateRenderer failed: ") + SDL_GetError();
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return false;
-    }
-
-    SDL_Texture* texture = SDL_CreateTexture(
-        renderer,
-        SDL_PIXELFORMAT_ABGR8888,
-        SDL_TEXTUREACCESS_STREAMING,
-        240,
-        160);
-    if (!texture) {
-        error = std::string("SDL_CreateTexture failed: ") + SDL_GetError();
-        SDL_DestroyRenderer(renderer);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return false;
-    }
-
-    // Audio is optional: without a device the loop falls back to the frame timer.
-    SDL_AudioDeviceID audio_device = 0;
-    if (SDL_InitSubSystem(SDL_INIT_AUDIO) == 0) {
-        SDL_AudioSpec want{};
-        want.freq = 32768;
-        want.format = AUDIO_S16SYS;
-        want.channels = 2;
-        want.samples = 512;
-        audio_device = SDL_OpenAudioDevice(nullptr, 0, &want, nullptr, 0); // SDL converts to the device format.
-        if (audio_device != 0) {
-            SDL_PauseAudioDevice(audio_device, 0);
-        }
-    }
-    if (audio_device == 0) {
-        std::cerr << "[audio] disabled: " << SDL_GetError() << "\n";
-    }
-    // About 60 ms of queued stereo int16 audio: enough to ride out frame jitter.
-    constexpr uint32_t kAudioQueueTargetBytes = 2048u * 2u * sizeof(int16_t);
-
-    bool running = true;
-    uint32_t held_mask = 0u;
-    uint32_t previous_mask = 0u;
-    // The texture (and window) follow the frame size: GBA 240x160, DS both screens 256x384.
-    uint32_t texture_width = 240u;
-    uint32_t texture_height = 160u;
-    SDL_RenderSetLogicalSize(renderer, static_cast<int>(texture_width), static_cast<int>(texture_height));
-    // DS touchscreen: the left mouse button on the bottom screen (mouse events arrive in frame pixels).
-    bool mouse_down = false;
-    int mouse_x = 0;
-    int mouse_y = 0;
-    bool previous_touch = false;
-    uint32_t previous_touch_x = 0u;
-    uint32_t previous_touch_y = 0u;
-    const bool frame_limit_enabled = options.frames_explicit;
-    const auto frame_target = std::chrono::duration<double>(1.0 / 59.7275);
-
-    while (running && (!frame_limit_enabled || executed_frames < options.frames)) {
-        const auto frame_begin = std::chrono::steady_clock::now();
-
-        SDL_Event event{};
-        while (SDL_PollEvent(&event) != 0) {
-            if (event.type == SDL_QUIT) {
-                running = false;
-                break;
-            }
-            if (event.type == SDL_KEYDOWN) {
-                if (event.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
-                    running = false;
-                    break;
-                }
-                if (event.key.repeat == 0) {
-                    held_mask |= KeyMaskFromScancode(event.key.keysym.scancode);
-                }
-            } else if (event.type == SDL_KEYUP) {
-                if (event.key.repeat == 0) {
-                    held_mask &= ~KeyMaskFromScancode(event.key.keysym.scancode);
-                }
-            } else if ((event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP) &&
-                       event.button.button == SDL_BUTTON_LEFT) {
-                mouse_down = event.type == SDL_MOUSEBUTTONDOWN;
-                mouse_x = event.button.x;
-                mouse_y = event.button.y;
-            } else if (event.type == SDL_MOUSEMOTION) {
-                mouse_x = event.motion.x;
-                mouse_y = event.motion.y;
-            }
-        }
-        if (!running) {
-            break;
-        }
-
-        emugbds::runtime::InputSnapshot input{};
-        input.gba_press_mask = held_mask & ~previous_mask;
-        input.gba_release_mask = previous_mask & ~held_mask;
-        previous_mask = held_mask;
-        constexpr int kDsScreenHeight = 192;
-        input.touch_down = mouse_down && texture_height == 2u * kDsScreenHeight && mouse_y >= kDsScreenHeight &&
-            mouse_y < 2 * kDsScreenHeight && mouse_x >= 0 && mouse_x < static_cast<int>(texture_width);
-        if (input.touch_down) {
-            input.touch_x = static_cast<uint32_t>(mouse_x);
-            input.touch_y = static_cast<uint32_t>(mouse_y - kDsScreenHeight);
-        }
-        const bool touch_changed = input.touch_down != previous_touch ||
-            (input.touch_down && (input.touch_x != previous_touch_x || input.touch_y != previous_touch_y));
-        previous_touch = input.touch_down;
-        previous_touch_x = input.touch_x;
-        previous_touch_y = input.touch_y;
-        if (input.gba_press_mask != 0u || input.gba_release_mask != 0u || touch_changed) {
-            if (!kernel.InjectInput(input, error)) {
-                SDL_DestroyTexture(texture);
-                SDL_DestroyRenderer(renderer);
-                SDL_DestroyWindow(window);
-                SDL_Quit();
-                return false;
-            }
-        }
-
-        emugbds::runtime::TickResult tick_result{};
-        if (!kernel.Tick(tick_result, error)) {
-            SDL_DestroyTexture(texture);
-            SDL_DestroyRenderer(renderer);
-            SDL_DestroyWindow(window);
-            SDL_Quit();
-            return false;
-        }
-        if (tick_result.status == emugbds::runtime::TickStatus::Stopped) {
-            break;
-        }
-        ++executed_frames;
-
-        emugbds::runtime::OutputBundle output{};
-        kernel.PollOutputs(output);
-        if (output.video.has_value() && output.video->pixels != nullptr) {
-            const auto& frame = *output.video;
-            if (frame.width != texture_width || frame.height != texture_height) {
-                SDL_Texture* resized = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING,
-                    static_cast<int>(frame.width), static_cast<int>(frame.height));
-                if (!resized) {
-                    error = std::string("SDL_CreateTexture failed: ") + SDL_GetError();
-                    SDL_DestroyTexture(texture);
-                    SDL_DestroyRenderer(renderer);
-                    SDL_DestroyWindow(window);
-                    SDL_Quit();
-                    return false;
-                }
-                SDL_DestroyTexture(texture);
-                texture = resized;
-                texture_width = frame.width;
-                texture_height = frame.height;
-                SDL_RenderSetLogicalSize(renderer, static_cast<int>(texture_width), static_cast<int>(texture_height));
-                const int scale = texture_height > 200u ? 2 : 3; // DS screens stack to 384 lines
-                SDL_SetWindowSize(window, static_cast<int>(texture_width) * scale, static_cast<int>(texture_height) * scale);
-            }
-            SDL_UpdateTexture(texture, nullptr, frame.pixels, static_cast<int>(frame.width * sizeof(uint32_t)));
-            SDL_RenderClear(renderer);
-            SDL_RenderCopy(renderer, texture, nullptr, nullptr);
-            SDL_RenderPresent(renderer);
-        }
-
-        if (audio_device != 0 && output.audio.has_value()) {
-            if (SDL_GetQueuedAudioSize(audio_device) > kAudioQueueTargetBytes * 4u) {
-                // Uncapped runs or a stalled device outpace playback; drop instead of lagging.
-                SDL_ClearQueuedAudio(audio_device);
-            }
-            SDL_QueueAudio(audio_device, output.audio->samples,
-                static_cast<uint32_t>(output.audio->sample_count * sizeof(int16_t)));
-        }
-
-        if (!options.uncapped) {
-            if (audio_device != 0 && output.audio.has_value()) {
-                // The GBA emits 32768 samples per emulated second, so draining to the target paces real time.
-                // The deadline keeps a stalled device from freezing input and video.
-                const auto deadline = frame_begin + frame_target * 2;
-                while (SDL_GetQueuedAudioSize(audio_device) > kAudioQueueTargetBytes &&
-                       std::chrono::steady_clock::now() < deadline) {
-                    SDL_Delay(1);
-                }
-            } else {
-                const auto elapsed = std::chrono::steady_clock::now() - frame_begin;
-                if (elapsed < frame_target) {
-                    std::this_thread::sleep_for(frame_target - elapsed);
-                }
-            }
-        }
-    }
-
-    if (audio_device != 0) {
-        SDL_CloseAudioDevice(audio_device);
-    }
-    SDL_DestroyTexture(texture);
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
-    return true;
-#endif
-}
-
 // Per-CPU state plus the most-hit unemulated I/O ports and memory blocks: what the DS game needs next.
 void PrintDsBringUpReport(const emugbds::inds::Core& core) {
     const auto print_top = [](const char* kind, const std::map<uint32_t, uint64_t>& counts) {
@@ -559,40 +288,48 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    emugbds::boot::ResolveDefaultBootPaths(options.boot);
-    if (options.no_gba_bios) {
-        options.boot.gba_bios_path.reset();
+    const bool has_rom = options.boot.nds_rom_path.has_value() || options.boot.gba_rom_path.has_value() ||
+        options.boot.slot2_rom_path.has_value();
+#if EMUGBDS_HAS_SDL2
+    if (!options.frames_explicit) {
+        options.interactive = true; // double-clicked or "Open with": headless runs always give --frames
     }
+#endif
 
-    std::unique_ptr<emugbds::core::IEmuCore> ds_core;
-    std::unique_ptr<emugbds::core::IEmuCore> gba_core;
-    emugbds::cores::InHouseGbaCoreAdapter* gba_inhouse_raw = nullptr;
-
-    auto inhouse_ds = std::make_unique<emugbds::cores::InHouseDsCoreAdapter>();
-    const emugbds::cores::InHouseDsCoreAdapter* ds_inhouse_raw = inhouse_ds.get();
-    ds_core = std::move(inhouse_ds);
-
-    (void)options.gba_backend;
-    auto inhouse_gba = std::make_unique<emugbds::cores::InHouseGbaCoreAdapter>();
-    gba_inhouse_raw = inhouse_gba.get();
-    gba_core = std::move(inhouse_gba);
-
-    emugbds::runtime::RuntimeKernel kernel(std::move(ds_core), std::move(gba_core));
-    if (!kernel.Boot(options.boot, error)) {
-        std::cerr << "Boot failed: " << error << '\n';
-        return 1;
-    }
-
+    std::unique_ptr<emugbds::frontend::Session> session;
     uint64_t executed_frames = 0;
     if (options.interactive) {
-        if (!RunInteractive(kernel, options, executed_frames, error)) {
+#if EMUGBDS_HAS_SDL2
+        emugbds::frontend::AppOptions app;
+        app.boot = options.boot;
+        app.has_rom = has_rom;
+        app.no_gba_bios = options.no_gba_bios;
+        app.frame_limit = options.frames_explicit ? options.frames : 0u;
+        app.uncapped = options.uncapped;
+        if (!emugbds::frontend::RunApp(app, session, executed_frames, error)) {
             std::cerr << "Interactive execution failed: " << error << '\n';
             return 1;
         }
+        if (!session) {
+            return 0; // closed without a game running
+        }
+#else
+        std::cerr << "Interactive execution failed: Interactive mode requested but SDL2 support is not enabled in this build\n";
+        return 1;
+#endif
     } else {
+        emugbds::boot::ResolveDefaultBootPaths(options.boot);
+        if (options.no_gba_bios) {
+            options.boot.gba_bios_path.reset();
+        }
+        session = emugbds::frontend::Session::Start(options.boot, error);
+        if (!session) {
+            std::cerr << "Boot failed: " << error << '\n';
+            return 1;
+        }
         emugbds::runtime::TickResult tick_result{};
         for (uint64_t frame = 0; frame < options.frames; ++frame) {
-            if (!kernel.Tick(tick_result, error)) {
+            if (!session->kernel().Tick(tick_result, error)) {
                 std::cerr << "Execution stopped on frame " << frame << ": " << error << '\n';
                 return 1;
             }
@@ -603,6 +340,8 @@ int main(int argc, char** argv) {
         }
     }
 
+    emugbds::runtime::RuntimeKernel& kernel = session->kernel();
+    const emugbds::cores::InHouseGbaCoreAdapter* gba_inhouse_raw = &session->gba();
     const auto& transition = kernel.last_transition();
     if (transition.has_value()) {
         std::cout << "Transition: " << transition->reason << '\n';
@@ -611,9 +350,9 @@ int main(int argc, char** argv) {
     std::cout << "Completed " << executed_frames << " frame(s) in mode "
               << (kernel.active_mode() == emugbds::core::EmuMode::DS ? "DS" : "GBA") << ".\n";
     if (options.debug_stats && kernel.active_mode() == emugbds::core::EmuMode::DS) {
-        PrintDsBringUpReport(ds_inhouse_raw->core());
+        PrintDsBringUpReport(session->ds().core());
     }
-    if (options.debug_stats && gba_inhouse_raw != nullptr && kernel.active_mode() == emugbds::core::EmuMode::GBA) {
+    if (options.debug_stats && kernel.active_mode() == emugbds::core::EmuMode::GBA) {
         const auto& stats = gba_inhouse_raw->unsupported_arm_stats();
         std::cout << "GBA unsupported stats: total=" << gba_inhouse_raw->unknown_arm_instruction_count()
                   << " generic=" << stats.generic

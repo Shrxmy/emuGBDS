@@ -51,6 +51,10 @@ Goal: progress from scaffold to executable ARM9/ARM7 instruction core.
 
 Goal: better debugging speed and confidence.
 
+0. Done: interactive app with menus, ROM picker and drag-and-drop, pause /
+   frame step / fast-forward, window scale, DS layout, fullscreen, key
+   rebinding, a settings file, a DS save-chip picker, and debug panels (live
+   CPU/IO state, layer toggles, screenshots, memory dumps).
 1. Add optional trace channels (`cpu`, `irq`, `dma`, `swi`, `video`).
 2. Add per-frame debug snapshot dumps for reproducible bug reports.
 3. Split tests into unit + integration suites for faster iteration.

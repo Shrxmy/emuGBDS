@@ -92,6 +92,8 @@ public:
     arm::IBus& arm7() noexcept { return arm7_view_; }
     const AccessLog& arm9_unmapped() const noexcept { return arm9_unmapped_; }
     const AccessLog& arm7_unmapped() const noexcept { return arm7_unmapped_; }
+    // Debug: a byte as `arm9`'s DMA sees it (no TCM). Only memory regions are safe; I/O reads may have side effects.
+    uint8_t DebugRead8(bool arm9, uint32_t address) const { return static_cast<uint8_t>(Read(arm9, address, 1u, false)); }
 
 private:
     class View final : public arm::IBus {

@@ -5,9 +5,17 @@
 - File: `host/src/main.cpp`
 - Responsibilities:
   - Parse CLI arguments (`--mode`, `--gba`, `--nds`, `--slot2`, `--interactive`, `--debug-stats`, etc.)
-  - Build `RuntimeKernel` with DS and GBA adapters
-  - Drive frame loop (headless or SDL interactive)
+  - Without `--frames`, hand over to the interactive app (`host/src/frontend/App.cpp`)
+  - With `--frames N`, start a `frontend::Session` and run N frames headless
   - Print transition/debug output
+
+The interactive app (`host/src/frontend/`) owns the SDL window and Dear ImGui
+menus. Opening a ROM builds a new `Session` (`Session.h`) from a `BootConfig`;
+the previous session is destroyed first so its DS save is written before the
+new one reads it. Settings live in `emugbds.ini` next to the executable
+(`Settings.h`, unit-tested in `frontend_settings`). Debug hooks it uses on the
+cores: `set_hidden_layers` (GBA `ingba::Core`, DS `Engine2d`) and
+`inds::MemoryBus::DebugRead8`.
 
 ## 2) Runtime Layer (Mode Orchestration)
 

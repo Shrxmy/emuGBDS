@@ -54,6 +54,8 @@ public:
     void SetTouch(bool down, uint32_t x, uint32_t y);
     // Writes the cartridge save file now if it changed (also done after writes settle).
     bool FlushSave(std::string& error);
+    // Debug: layers engine 0 (A) or 1 (B) leaves out; see Engine2d::set_hidden_layers.
+    void SetHiddenLayers(int engine, uint8_t mask) noexcept { bus_.engine(engine).set_hidden_layers(mask); }
     std::optional<nds::NdsCartridgeHeaderInfo> nds_header() const noexcept { return nds_header_; }
     std::optional<gba::GbaCartridgeHeaderInfo> slot2_header() const noexcept { return slot2_header_; }
 

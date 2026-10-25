@@ -4,7 +4,8 @@ Clean-room emulator host focused on in-house core development.
 
 Current state:
 - In-house GBA core scaffold (`ingba`) with incremental ARM execution support.
-- In-house DS core (`inds`) in bring-up: ARM9/ARM7 run real code on the shared CPU after a direct boot; no interrupts, IPC, or video yet. Firmware Slot-2 transition support.
+- In-house DS core (`inds`) in bring-up: both CPUs, 2D video, input, cartridge and save chip, and the real BIOS/firmware handoff to GBA; no 3D or sound yet.
+- SDL2 + Dear ImGui app with menus, a ROM picker, settings, and debug panels.
 - Optional external melonDS adapter support behind `EMUGBDS_ENABLE_MELONDS`.
 
 ## Documentation
@@ -28,6 +29,26 @@ cmake --build --preset build-nds-clang-release
 ```
 
 ## Run
+
+Open the app and pick a game with File > Open ROM (Ctrl+O), or drag a `.gba` /
+`.nds` file onto the window:
+
+```powershell
+.\build\Release\emugbds.exe
+```
+
+Or start a game straight away (the window opens unless `--frames` is given):
+
+```powershell
+.\build\Release\emugbds.exe .\roms\Fire_Emblem.gba
+.\build\Release\emugbds.exe .\roms\Fire_Emblem_Shadow_Dragon.nds
+```
+
+The menus cover pause / frame step / fast-forward, window size, DS screen
+layout, fullscreen, BIOS paths, key bindings, the DS save chip type, and debug
+panels (live CPU/IO state, BG/OBJ layer toggles, screenshots, memory dumps).
+Settings are kept in `emugbds.ini` next to the executable; screenshots (BMP)
+and memory dumps go to `screenshots\` and `dumps\` there.
 
 Headless in-house GBA smoke run:
 
@@ -79,6 +100,10 @@ Interactive controls:
 - `D` = `X`, `C` = `Y` (DS)
 - Left mouse button on the bottom screen = DS touchscreen
 - `Esc` = exit interactive loop
+
+Game keys can be changed in Settings > Controls. Hotkeys: `Ctrl+O` open,
+`Ctrl+R` reset, `P` pause, `N` step one frame (while paused), hold `Tab` to
+fast-forward, `F1` CPU/IO panel, `F11` fullscreen, `F12` screenshot.
 
 ## Test
 

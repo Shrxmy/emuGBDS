@@ -22,10 +22,11 @@ Run tests:
 ctest --test-dir .\build -C Release --output-on-failure
 ```
 
-Run GBA (interactive):
+Open the app (then File > Open ROM, or drop a ROM on the window), or start a game directly:
 
 ```powershell
-.\build\Release\emugbds.exe --mode gba --gba .\roms\Fire_Emblem.gba --gba-core internal --interactive
+.\build\Release\emugbds.exe
+.\build\Release\emugbds.exe .\roms\Fire_Emblem.gba
 ```
 
 Run GBA with debug stats:

@@ -128,7 +128,7 @@ void Engine2d::RenderLine(uint32_t y, bool enabled, uint32_t* out) noexcept {
 
 
 void Engine2d::DrawLine(uint32_t y, bool enabled, uint32_t* out) noexcept {
-    const uint32_t control = dispcnt();
+    const uint32_t control = dispcnt() & ~(static_cast<uint32_t>(hidden_layers_) << 8u);
     uint32_t display_mode = (control >> 16u) & 3u;
     if (engine_ == 1) {
         display_mode &= 1u;

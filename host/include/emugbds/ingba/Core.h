@@ -46,6 +46,9 @@ public:
     uint16_t last_dispcnt_written() const noexcept;
 
     const arm::CpuState& cpu() const noexcept { return cpu_.state(); }
+    const MemoryBus& bus() const noexcept { return bus_; }
+    // Debug: layers to leave out (bits 0-3 BG0-BG3, bit 4 OBJ).
+    void set_hidden_layers(uint8_t mask) noexcept { hidden_layers_ = mask; }
     uint64_t frame_counter() const noexcept { return frame_counter_; }
     uint64_t unknown_arm_instruction_count() const noexcept { return cpu_.unknown_arm_instruction_count(); }
     const UnsupportedArmStats& unsupported_arm_stats() const noexcept { return cpu_.unsupported_arm_stats(); }
@@ -99,6 +102,7 @@ private:
     uint32_t lcd_cycle_in_frame_ = 0;
     uint64_t frame_counter_ = 0;
     uint8_t last_unsupported_swi_ = 0;
+    uint8_t hidden_layers_ = 0;
 };
 
 } // namespace emugbds::ingba

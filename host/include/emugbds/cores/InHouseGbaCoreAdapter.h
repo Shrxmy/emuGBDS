@@ -41,6 +41,8 @@ public:
     uint32_t cpsr() const noexcept { return core_->cpu().cpsr; }
     uint64_t dispcnt_write_count() const noexcept { return core_->dispcnt_write_count(); }
     uint16_t last_dispcnt_written() const noexcept { return core_->last_dispcnt_written(); }
+    const ingba::Core& core() const noexcept { return *core_; }
+    void SetHiddenLayers(uint8_t mask) noexcept { core_->set_hidden_layers(mask); }
 
 private:
     // Heap-owned: the core is large and holds a CPU bound to its own bus, so Initialize replaces it instead of assigning.

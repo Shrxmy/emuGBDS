@@ -7,13 +7,20 @@ runtime orchestration.
 
 ```text
 main.cpp
+  -> frontend (App window, Session, Settings)
   -> RuntimeKernel
       -> IEmuCore adapters
           -> in-house GBA core (ingba)
           -> in-house DS core (inds)
 ```
 
-- `host/src/main.cpp`: CLI and optional SDL presentation.
+- `host/src/main.cpp`: CLI parsing, headless runs, and debug-stats reports.
+- `host/src/frontend/`: the interactive app. `Session` owns one run (both core
+  adapters plus the kernel; destroying it writes the DS save). `Settings` reads
+  and writes `emugbds.ini`. `App` is the SDL2 window with a Dear ImGui menu bar,
+  ROM picker (`FileBrowser`), drag-and-drop, pause/step/fast-forward, layout,
+  settings windows, and debug panels. It is built only when SDL2 is found.
+- `host/third_party/imgui/`: vendored Dear ImGui (see `VERSION.txt`).
 - `host/src/runtime/`: frame loop, input forwarding, and output polling.
 - `host/src/cores/`: adapters implementing the common core interface.
 - `host/src/arm/`: shared ARM CPU interpreter, used by the GBA core and

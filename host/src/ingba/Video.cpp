@@ -135,7 +135,7 @@ void Core::CaptureVideoScanlineState(uint16_t scanline) noexcept {
 
 
 void Core::UpdateVideoFrame() {
-    const uint16_t dispcnt = bus_.Read16(kDispCntAddress);
+    const uint16_t dispcnt = static_cast<uint16_t>(bus_.Read16(kDispCntAddress) & ~(hidden_layers_ << 8u));
     if ((dispcnt & (1u << 7u)) != 0u) {
         video_buffer_.fill(0xFFFFFFFFu);
         return;

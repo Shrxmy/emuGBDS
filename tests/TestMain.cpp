@@ -2,6 +2,7 @@
 #include "emugbds/core/Types.h"
 #include "emugbds/cores/InHouseDsCoreAdapter.h"
 #include "emugbds/cores/InHouseGbaCoreAdapter.h"
+#include "emugbds/frontend/Settings.h"
 #include "emugbds/input/GbaKeys.h"
 #include "emugbds/inds/Backup.h"
 #include "emugbds/inds/Core.h"
@@ -11,6 +12,7 @@
 #include "emugbds/runtime/RuntimeKernel.h"
 #include "emugbds/runtime/Types.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <filesystem>
@@ -1799,6 +1801,14 @@ void TestIngbaVideoMode3Render(TestContext& t) {
         t.Expect(pixels[0] == 0xFF0000FFu, "ingba mode3 pixel0 renders red");
         t.Expect(pixels[1] == 0xFF00FF00u, "ingba mode3 pixel1 renders green");
     }
+
+    core.set_hidden_layers(0x04u); // debug: hide BG2
+    error.clear();
+    t.Expect(core.RunFrame(error), "ingba mode3 core runs a frame with BG2 hidden");
+    t.Expect(core.video_pixels()[0] == 0xFF000000u, "a hidden BG2 shows the backdrop instead");
+    core.set_hidden_layers(0u);
+    error.clear();
+    t.Expect(core.RunFrame(error) && core.video_pixels()[0] == 0xFF0000FFu, "showing BG2 again restores it");
 }
 
 void TestIngbaVideoMode4Render(TestContext& t) {
@@ -2887,6 +2897,13 @@ void TestIndsEngine2dRendering(TestContext& t) {
     t.Expect(line[0] == 0xFF0000FFu, "a text BG tile draws its palette colour (red)");
     t.Expect(line[4] == 0xFFFF0000u, "an OBJ draws over a BG of equal priority (blue)");
     t.Expect(line[12] == 0xFF000000u, "beyond the tile and OBJ the backdrop shows");
+    engine.set_hidden_layers(0x10u); // debug: hide OBJ
+    engine.RenderLine(0u, true, line.data());
+    t.Expect(line[4] == 0xFF0000FFu, "hiding OBJ shows the BG under it");
+    engine.set_hidden_layers(0x01u); // hide BG0
+    engine.RenderLine(0u, true, line.data());
+    t.Expect(line[0] == 0xFF000000u && line[4] == 0xFFFF0000u, "hiding BG0 leaves the OBJ over the backdrop");
+    engine.set_hidden_layers(0u);
     for (uint32_t i = 0u; i < 32u; ++i) {
         arm9.Write16(0x06400040u + i * 2u, 0x0101u); // 2D 256-colour OBJ data at tile 2 (64 bytes): colour 1
     }
@@ -3060,13 +3077,69 @@ void TestRuntimeKernelProvidesGbaVideo(TestContext& t) {
     }
 }
 
+void TestFrontendSettings(TestContext& t) {
+    using emugbds::frontend::DsLayout;
+    using emugbds::frontend::Settings;
+    const auto dir = MakeTempRoot() / "frontend-settings";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const auto path = dir / "emugbds.ini";
+    std::string error;
+
+    Settings missing;
+    t.Expect(missing.Load(path, error), "a missing settings file loads");
+    t.Expect(missing.gba_scale == 3 && missing.ds_scale == 2 && missing.keys[0] == "Z" && missing.keys[3] == "Return",
+        "a missing settings file keeps the defaults");
+
+    Settings settings;
+    for (int i = 0; i < 10; ++i) {
+        settings.AddRecentRom("rom" + std::to_string(i) + ".gba");
+    }
+    settings.AddRecentRom("rom5.gba");
+    t.Expect(settings.recent_roms.size() == Settings::kMaxRecentRoms && settings.recent_roms[0] == "rom5.gba" &&
+        settings.recent_roms[1] == "rom9.gba" && std::count(settings.recent_roms.begin(), settings.recent_roms.end(),
+        std::string("rom5.gba")) == 1, "recent ROMs are most recent first, without duplicates, and capped");
+
+    settings.gba_bios = "D:/bios/gba bios.bin";
+    settings.nds_firmware = "fw.bin";
+    settings.last_directory = "D:/roms";
+    settings.ds_scale = 4;
+    settings.ds_layout = DsLayout::Horizontal;
+    settings.fast_forward_speed = 0;
+    settings.gba_via_ds_firmware = true;
+    settings.keys[3] = "Space";
+    t.Expect(settings.Save(path, error), "settings save");
+    t.Expect(!std::filesystem::exists(dir / "emugbds.ini.tmp"), "saving leaves no temporary file");
+    Settings reloaded;
+    t.Expect(reloaded.Load(path, error), "saved settings load");
+    t.Expect(reloaded.gba_bios == settings.gba_bios && reloaded.nds_firmware == "fw.bin" &&
+        reloaded.nds_bios7.empty() && reloaded.last_directory == "D:/roms" &&
+        reloaded.recent_roms == settings.recent_roms && reloaded.ds_scale == 4 &&
+        reloaded.ds_layout == DsLayout::Horizontal && reloaded.fast_forward_speed == 0 &&
+        reloaded.gba_via_ds_firmware && reloaded.keys == settings.keys, "every setting survives a save and load");
+
+    {
+        std::ofstream edited(path, std::ios::trunc);
+        edited << "gba_scale=99\nds_scale=x\nds_layout=diagonal\nfast_forward_speed=-1\nkey.A=\n"
+               << "not a setting\n# key.B=W\nkey.B=Q\r\nkey.Nope=Z\n";
+    }
+    Settings hand_edited;
+    t.Expect(hand_edited.Load(path, error), "a hand-edited settings file loads");
+    t.Expect(hand_edited.gba_scale == 3 && hand_edited.ds_scale == 2 && hand_edited.ds_layout == DsLayout::Vertical &&
+        hand_edited.fast_forward_speed == 4 && hand_edited.keys[0] == "Z",
+        "out-of-range, malformed, and empty values keep the defaults");
+    t.Expect(hand_edited.keys[1] == "Q", "a CRLF line still sets its key");
+    std::filesystem::remove_all(dir);
+}
+
 int RunUnitTests() {
     struct NamedTest {
         const char* name;
         void (*fn)(TestContext&);
     };
 
-    const std::array<NamedTest, 63> tests = {{
+    const std::array<NamedTest, 64> tests = {{
+        {"frontend_settings", &TestFrontendSettings},
         {"arm_v5_clz_and_saturation", &TestArmV5ClzAndSaturation},
         {"arm_v5_halfword_multiplies", &TestArmV5HalfwordMultiplies},
         {"arm_v5_branches_and_interworking", &TestArmV5BranchesAndInterworking},
