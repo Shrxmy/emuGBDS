@@ -31,6 +31,8 @@ public:
 
     // Display-side reads. Offsets are relative to the area base; unmapped reads are 0.
     uint8_t Read8(Area area, uint32_t offset) const noexcept;
+    // `offset` in place, for reading a run of bytes inside one 16 KiB page (a tile row); nullptr when unmapped.
+    const uint8_t* Row(Area area, uint32_t offset) const noexcept;
     uint16_t Read16(Area area, uint32_t offset) const noexcept {
         return static_cast<uint16_t>(Read8(area, offset) | (Read8(area, offset + 1u) << 8u));
     }

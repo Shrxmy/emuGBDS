@@ -48,9 +48,24 @@ private:
     void RenderTextBg(uint32_t bg, uint32_t y, std::array<int32_t, kWidth>& line) const noexcept;
     void RenderAffineBg(uint32_t bg, uint32_t kind, std::array<int32_t, kWidth>& line) const noexcept;
     void RenderObjs(uint32_t y) noexcept;
+    // Compositing settings that are fixed for a whole line, read once instead of per pixel.
+    struct LineSetup {
+        uint16_t backdrop = 0;
+        uint16_t bldcnt = 0;
+        uint32_t eva = 0;
+        uint32_t evb = 0;
+        uint32_t evy = 0;
+        bool windows = false;
+        uint32_t bg_count = 0;
+        std::array<uint8_t, 4> bgs{};         // active BGs, by priority then number
+        std::array<uint8_t, 4> bg_priority{};
+    };
+
+    LineSetup SetupLine() const noexcept;
     uint8_t WindowMask(uint32_t x, uint32_t y) const noexcept;
-    uint16_t Compose(uint32_t x, uint32_t y) const noexcept;
-    uint32_t ToAbgr(uint16_t color) const noexcept;
+    uint16_t Compose(uint32_t x, uint32_t y, const LineSetup& setup) const noexcept;
+    // `bright` is MASTER_BRIGHT, read once per line.
+    static uint32_t ToAbgr(uint16_t color, uint16_t bright) noexcept;
 
     VideoMemory& memory_;
     int engine_;

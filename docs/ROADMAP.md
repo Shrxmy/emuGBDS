@@ -45,8 +45,9 @@ Goal: progress from scaffold to executable ARM9/ARM7 instruction core.
    and story scenes.
 6. Done: DS sound (all channel formats, mixer, capture), paced in real time
    through the audio queue.
-7. Next: the 3D engine (needed by Devil Survivor and many others), and DS
-   speed (headless runs are only just above 60 fps).
+7. Next: the 3D engine (needed by Devil Survivor and many others). The 2D
+   engine now composes per line and fetches per tile (Shadow Dragon about
+   84 fps headless); the ARM interpreter is the next speed target.
 8. Keep Slot-2 transition support as an integration target.
 
 ## Phase 4: Runtime and Tooling

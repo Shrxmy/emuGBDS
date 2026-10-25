@@ -178,9 +178,19 @@ uint8_t* VideoMemory::CpuPointer(bool arm9, uint32_t address) noexcept {
 
 
 uint8_t VideoMemory::Read8(Area area, uint32_t offset) const noexcept {
+    const uint8_t* row = Row(area, offset);
+    return row != nullptr ? *row : 0u;
+}
+
+
+const uint8_t* VideoMemory::Row(Area area, uint32_t offset) const noexcept {
     const uint32_t pages = kAreaPages[static_cast<size_t>(area)];
-    const uint8_t* base = pages_[static_cast<size_t>(area)][(offset / kPageSize) % pages];
-    return base != nullptr ? base[offset & (kPageSize - 1u)] : 0u;
+    uint32_t page = offset / kPageSize;
+    if (page >= pages) {
+        page %= pages; // only mirrored offsets pay for the division
+    }
+    const uint8_t* base = pages_[static_cast<size_t>(area)][page];
+    return base != nullptr ? base + (offset & (kPageSize - 1u)) : nullptr;
 }
 
 
