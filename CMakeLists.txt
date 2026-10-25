@@ -125,6 +125,7 @@ set(EMUGBDS_FRONTEND_SOURCES
 
 add_executable(emugbds
     host/src/main.cpp
+    host/src/core/HostPerformance.cpp
     ${EMUGBDS_FRONTEND_SOURCES}
     host/src/core/ModeCoordinator.cpp
     host/src/runtime/RuntimeKernel.cpp

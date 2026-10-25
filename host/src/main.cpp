@@ -1,4 +1,5 @@
 #include "emugbds/boot/BootPolicy.h"
+#include "emugbds/core/HostPerformance.h"
 #include "emugbds/frontend/Session.h"
 
 #include <algorithm>
@@ -281,6 +282,7 @@ void PrintDsBringUpReport(const emugbds::inds::Core& core) {
 } // namespace
 
 int main(int argc, char** argv) {
+    emugbds::core::PreferPerformanceCores(); // emulation runs on this thread
     CliOptions options;
     std::string error;
     if (!ParseArgs(argc, argv, options, error)) {
