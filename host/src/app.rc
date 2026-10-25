@@ -1,0 +1,3 @@
+// Windows resources. The first icon is the application icon: Explorer and the taskbar show it, and
+// SDL takes it for the window. Generated from assets/branding/crystalarm-icon.svg (16-256 px).
+1 ICON "../../assets/branding/crystalarm-icon.ico"

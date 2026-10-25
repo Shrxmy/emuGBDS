@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">CrystalARM application icon</title>
+  <desc id="description">A softly colored, hand-drawn crystal framed by subtle GBA and NDS cartridges.</desc>
+
+  <rect x="24" y="24" width="464" height="464" rx="112" fill="#EEE8F4"/>
+
+  <!-- Two quiet cartridge silhouettes frame the crystal: wide GBA, compact NDS. -->
+  <g stroke="#7C88A3" stroke-linecap="round" stroke-linejoin="round" opacity="0.58">
+    <g transform="rotate(-7 132 286)">
+      <path d="M78 245 C78 238 83 233 90 232 L169 232 C177 232 182 237 183 245 L188 322 C189 330 184 335 176 336 L91 339 C84 339 79 334 79 327Z" fill="#DDBACF" stroke-width="6"/>
+      <path d="M91 260 C112 263 145 261 170 257 L174 316 C151 319 119 321 95 319Z" fill="#F5EDF4" stroke-width="4"/>
+      <path d="M84 247 C110 250 148 247 177 243" fill="none" stroke-width="4"/>
+    </g>
+
+    <g transform="rotate(7 388 285)">
+      <path d="M351 226 L405 226 419 241 419 326 C419 333 414 337 407 337 L351 337 C344 337 340 332 340 325 L340 237 C340 231 345 226 351 226Z" fill="#BEDDD4" stroke-width="6"/>
+      <path d="M357 250 C371 247 392 248 405 252 L405 316 C390 313 372 313 357 317Z" fill="#F1F4F2" stroke-width="4"/>
+      <path d="M405 226 405 241 419 241" fill="none" stroke-width="4"/>
+    </g>
+  </g>
+
+  <g stroke="#596987" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M252 88 C246 89 242 94 238 100 L165 207 C160 214 158 222 159 230 L176 347 C177 356 181 364 188 371 L247 428 C253 434 260 435 266 429 L334 358 C340 352 342 344 341 335 L326 213 C325 204 321 197 314 191 L266 100 C263 93 258 89 252 88Z" fill="#AEBED8"/>
+
+    <path d="M252 88 165 207 214 228Z" fill="#D7ACC5"/>
+    <path d="M252 88 214 228 275 183Z" fill="#AABBD6"/>
+    <path d="M252 88 314 191 275 183Z" fill="#C4E2D5"/>
+
+    <path d="M165 207 176 347 212 313 214 228Z" fill="#AFC6E1"/>
+    <path d="M314 191 275 183 304 344 341 335 326 213Z" fill="#A9B9DA"/>
+
+    <path d="M214 228 212 313 248 355 275 183Z" fill="#99ADCB"/>
+    <path d="M275 183 248 355 267 383 304 344Z" fill="#D5AFC8"/>
+
+    <path d="M176 347 188 371 247 428 248 355 212 313Z" fill="#C9A9C8"/>
+    <path d="M248 355 247 428 266 429 304 344 267 383Z" fill="#C5E3D7"/>
+    <path d="M304 344 266 429 334 358 341 335Z" fill="#9CAFD3"/>
+  </g>
+
+  <path d="M373 126 C374 147 381 155 398 158 C380 160 373 169 370 191 C369 170 362 162 345 159 C362 156 370 147 373 126Z" fill="#F8F4FA" stroke="#667392" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <path d="M182 388 C186 395 192 401 199 407" fill="none" stroke="#FFFFFF" stroke-opacity="0.6" stroke-width="5" stroke-linecap="round"/>
+</svg>

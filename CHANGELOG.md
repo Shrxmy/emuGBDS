@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- App icon: the crystal and cartridges artwork (`assets/branding`), on the exe and the window.
 - CPU timing: instructions now take their real cycle counts (memory waitstates,
   WAITCNT, multiplies, branches) on the GBA and on both DS CPUs, instead of one
   cycle each. DS boot and menu transitions stutter far less.

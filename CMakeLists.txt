@@ -153,6 +153,9 @@ endif()
 
 target_include_directories(emugbds PRIVATE host/include)
 target_compile_definitions(emugbds PRIVATE EMUGBDS_VERSION="${PROJECT_VERSION}")
+if(WIN32)
+    target_sources(emugbds PRIVATE host/src/app.rc) # application icon
+endif()
 
 if(EMUGBDS_BUILD_WITH_MELONDS)
     target_compile_definitions(emugbds PRIVATE EMUGBDS_HAS_MELONDS=1)
