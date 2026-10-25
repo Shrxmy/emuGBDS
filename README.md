@@ -123,6 +123,12 @@ Run all tests:
 ctest --test-dir .\build -C Release --output-on-failure
 ```
 
+## License
+
+emuGBDS is released under the MIT License (see `LICENSE`). Bundled third-party
+code (SDL, Dear ImGui) keeps its own license; see `THIRD_PARTY_NOTICES.md`.
+No BIOS, firmware, or game files are included or distributed.
+
 ## Privacy
 
 `roms/` and `bios/` are intended for local development assets and should not be committed.

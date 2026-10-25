@@ -7,7 +7,7 @@ Thanks for contributing.
 - Keep project-owned code original-first.
 - Follow [CLEAN_ROOM_POLICY.md](./CLEAN_ROOM_POLICY.md).
 - Preserve upstream licensing in vendored trees.
-- Contributions to project-owned code are accepted under `GPL-3.0-or-later`.
+- Contributions to project-owned code are accepted under the MIT License (see `LICENSE`).
 
 ## Pull Request Requirements
 

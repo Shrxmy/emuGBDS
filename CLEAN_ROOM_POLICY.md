@@ -8,7 +8,7 @@ This document defines how to avoid accidental code-copy contamination.
 
 - Applies to all code under `host/` and any newly created project-owned directories.
 - Does not change the original licenses of vendored upstream trees (for example `melonDS-master/`, `sdl/`).
-- Project-owned code licensing is documented in the top-level `LICENSE` (`GPL-3.0-or-later`).
+- Project-owned code licensing is documented in the top-level `LICENSE` (MIT).
 
 ## Core Rule
 
