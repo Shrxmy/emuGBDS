@@ -17,6 +17,8 @@ constexpr uint32_t kBldCnt = 0x50u;
 constexpr uint32_t kBldAlpha = 0x52u;
 constexpr uint32_t kBldY = 0x54u;
 constexpr uint32_t kMasterBright = 0x6Cu;
+constexpr uint32_t kCaptureControl = 0x64u; // DISPCAPCNT (engine A)
+constexpr uint32_t kCaptureEnable = 1u << 31;
 constexpr uint32_t kLayerObj = 4u;
 constexpr uint32_t kLayerBackdrop = 5u;
 constexpr uint8_t kAllLayers = 0x3Fu;
@@ -149,24 +151,49 @@ void Engine2d::DrawLine(uint32_t y, bool enabled, uint32_t* out) noexcept {
     if (engine_ == 1) {
         display_mode &= 1u;
     }
+    // Capture starts at the line 0 after it is enabled and ends (clearing the enable bit) at line 192.
+    if (engine_ == 0 && y == 0u) {
+        capturing_ = enabled && (Reg32(kCaptureControl) & kCaptureEnable) != 0u;
+    }
+    const uint32_t capture = Reg32(kCaptureControl);
+    capturing_ = capturing_ && (capture & kCaptureEnable) != 0u; // clearing the enable bit stops it
+    const bool capture_graphics = capturing_ && (capture & (1u << 24)) == 0u && ((capture >> 29u) & 3u) != 1u;
+    // The layers are composed for the screen, and for capture whatever the screen shows.
+    const bool compose = enabled && (display_mode == 1u || capture_graphics);
+    if (compose) {
+        ComposeLine(y, control);
+    }
+    if (capturing_) {
+        CaptureLine(y, compose);
+        if (y == kHeight - 1u) {
+            capturing_ = false;
+            regs_[kCaptureControl + 3u] &= 0x7Fu;
+        }
+    }
+
+    const ChannelTable display = DisplayTable(Reg16(kMasterBright));
     if (!enabled || display_mode == 0u) {
         std::fill(out, out + kWidth, 0xFFFFFFFFu); // Display off is white.
-        return;
-    }
-    if (display_mode == 2u) {
+    } else if (display_mode == 1u && (control & (1u << 7)) != 0u) {
+        std::fill(out, out + kWidth, 0xFFFFFFFFu); // Forced blank is white, whatever the master brightness
+    } else if (display_mode == 1u) {
+        for (uint32_t x = 0u; x < kWidth; ++x) {
+            out[x] = ToAbgr(composed_[x], display);
+        }
+    } else if (display_mode == 2u) {
         const uint32_t bank = (control >> 18u) & 3u;
-        const ChannelTable display = DisplayTable(Reg16(kMasterBright));
         for (uint32_t x = 0u; x < kWidth; ++x) {
             out[x] = ToAbgr(memory_.LcdcBank16(bank, y * kWidth + x), display);
         }
-        return;
+    } else {
+        std::fill(out, out + kWidth, ToAbgr(0u, display)); // shortcut: main-memory display FIFO not emulated.
     }
-    if (display_mode == 3u) {
-        std::fill(out, out + kWidth, ToAbgr(0u, DisplayTable(Reg16(kMasterBright)))); // shortcut: main-memory display FIFO not emulated.
-        return;
-    }
+}
+
+
+void Engine2d::ComposeLine(uint32_t y, uint32_t control) noexcept {
     if ((control & (1u << 7)) != 0u) {
-        std::fill(out, out + kWidth, 0xFFFFFFFFu); // Forced blank
+        composed_.fill(0x7FFFu); // Forced blank is white
         return;
     }
 
@@ -216,11 +243,50 @@ void Engine2d::DrawLine(uint32_t y, bool enabled, uint32_t* out) noexcept {
         RenderObjs(y);
     }
     const LineSetup setup = SetupLine(y);
-    const ChannelTable display = DisplayTable(Reg16(kMasterBright));
     // Most lines have no windows, colour effects, or semi-transparent OBJs: the top layer is the pixel.
     const bool plain_compose = !setup.windows && ((setup.bldcnt >> 6u) & 3u) == 0u && !obj_blend_;
     for (uint32_t x = 0u; x < kWidth; ++x) {
-        out[x] = ToAbgr(plain_compose ? TopColor(x, setup) : Compose(x, setup), display);
+        composed_[x] = plain_compose ? TopColor(x, setup) : Compose(x, setup);
+    }
+}
+
+
+void Engine2d::CaptureLine(uint32_t y, bool composed) noexcept {
+    const uint32_t capture = Reg32(kCaptureControl);
+    const uint32_t size = (capture >> 20u) & 3u;
+    const uint32_t width = size == 0u ? 128u : 256u;
+    const uint32_t height = size == 0u ? 128u : size == 1u ? 64u : size == 2u ? 128u : 192u;
+    if (y >= height) {
+        return;
+    }
+    const uint32_t source = (capture >> 29u) & 3u; // 0 = A, 1 = B, 2/3 = A and B blended
+    const uint32_t eva = std::min<uint32_t>(capture & 31u, 16u);
+    const uint32_t evb = std::min<uint32_t>((capture >> 8u) & 31u, 16u);
+    const bool source_a_3d = (capture & (1u << 24)) != 0u;
+    const bool source_b_fifo = (capture & (1u << 25)) != 0u;
+    const uint32_t control = dispcnt();
+    // Offsets are in 32 KiB steps and wrap within the 128 KiB bank; VRAM display mode reads from 0.
+    const uint32_t read_bank = (control >> 18u) & 3u;
+    const uint32_t read_base = ((control >> 16u) & 3u) == 2u ? 0u : ((capture >> 26u) & 3u) * 0x4000u;
+    const uint32_t write_bank = (capture >> 16u) & 3u;
+    const uint32_t write_base = ((capture >> 18u) & 3u) * 0x4000u;
+    for (uint32_t x = 0u; x < width; ++x) {
+        const uint32_t pixel = y * width + x;
+        // Source A is opaque graphics, or the (not emulated, transparent) 3D screen; a line the
+        // engine did not draw (powered off) is transparent too.
+        const uint16_t a = source_a_3d || !composed ? 0u : static_cast<uint16_t>(composed_[x] | 0x8000u);
+        const uint16_t b = source_b_fifo ? 0u : memory_.LcdcBank16(read_bank, (read_base + pixel) & 0xFFFFu);
+        uint16_t value = source == 0u ? a : b;
+        if (source >= 2u) {
+            const uint32_t factor_a = (a & 0x8000u) != 0u ? eva : 0u;
+            const uint32_t factor_b = (b & 0x8000u) != 0u ? evb : 0u;
+            value = (factor_a != 0u || factor_b != 0u) ? 0x8000u : 0u;
+            for (uint32_t shift = 0u; shift < 15u; shift += 5u) {
+                const uint32_t channel = (((a >> shift) & 31u) * factor_a + ((b >> shift) & 31u) * factor_b) / 16u;
+                value = static_cast<uint16_t>(value | (std::min(channel, 31u) << shift));
+            }
+        }
+        memory_.WriteLcdcBank16(write_bank, (write_base + pixel) & 0xFFFFu, value);
     }
 }
 

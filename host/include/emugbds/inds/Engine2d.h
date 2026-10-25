@@ -3,8 +3,9 @@
 // One DS 2D graphics engine (A at 4000000h, B at 4001000h): its registers and
 // a scanline renderer for text, affine, extended affine and bitmap BGs, OBJs,
 // windows, blending, and master brightness (GBATEK "DS Video").
-// shortcut: no mosaic, no 3D (BG0 in 3D mode is transparent), no display
-// capture, and main-memory display mode shows black.
+// Engine A also has the display capture unit (DISPCAPCNT, GBATEK "DS Video Capture").
+// shortcut: no mosaic, no 3D (BG0 in 3D mode and the 3D capture source are transparent),
+// and main-memory display mode (and its capture source) shows black.
 
 #include "emugbds/inds/VideoMemory.h"
 
@@ -19,6 +20,7 @@ using ChannelTable = std::array<uint8_t, 32>;
 class Engine2d {
 public:
     static constexpr uint32_t kWidth = 256u;
+    static constexpr uint32_t kHeight = 192u;
     static constexpr uint32_t kRegisterBytes = 0x70u;
 
     Engine2d(VideoMemory& memory, int engine) noexcept : memory_(memory), engine_(engine) {}
@@ -48,6 +50,10 @@ private:
     uint32_t dispcnt() const noexcept { return Reg32(0x00u); }
 
     void DrawLine(uint32_t y, bool enabled, uint32_t* out) noexcept;
+    // Layers and effects of line y into composed_ (15-bit colours, before master brightness).
+    void ComposeLine(uint32_t y, uint32_t control) noexcept;
+    // Display capture of line y (engine A); `composed` says whether ComposeLine drew this line.
+    void CaptureLine(uint32_t y, bool composed) noexcept;
     void RenderTextBg(uint32_t bg, uint32_t y, std::array<int32_t, kWidth>& line) const noexcept;
     void RenderAffineBg(uint32_t bg, uint32_t kind, std::array<int32_t, kWidth>& line) const noexcept;
     void RenderObjs(uint32_t y) noexcept;
@@ -84,6 +90,8 @@ private:
     std::array<ObjPixel, kWidth> obj_line_{};
     std::array<bool, kWidth> obj_window_{};
     bool obj_blend_ = false; // a semi-transparent or bitmap OBJ was drawn on this line
+    std::array<uint16_t, kWidth> composed_{};
+    bool capturing_ = false; // a capture started at line 0 of this frame
 };
 
 } // namespace emugbds::inds

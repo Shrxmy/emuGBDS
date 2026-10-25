@@ -2909,6 +2909,33 @@ void TestIndsCardKey1Boot(TestContext& t) {
         "main data mode reads the ROM");
 }
 
+// Display capture (GBATEK "DS Video Capture"): engine A's composed picture into an LCDC VRAM bank.
+void TestIndsDisplayCapture(TestContext& t) {
+    emugbds::inds::MemoryBus bus;
+    auto& arm9 = bus.arm9();
+    std::vector<uint32_t> line(256u);
+    arm9.Write32(0x04000304u, 0x0003u);            // POWCNT1: LCDs and engine A on
+    arm9.Write8(0x04000240u, 0x80u);               // VRAMCNT_A: LCDC
+    arm9.Write32(0x04000000u, 0x00010000u);        // DISPCNT A: graphics display, no layers (backdrop only)
+    arm9.Write16(0x05000000u, 0x1234u);            // backdrop colour
+    arm9.Write32(0x04000064u, 0x80300000u);        // DISPCAPCNT: enable, source A, bank A offset 0, 256x192
+    bus.engine(0).RenderLine(5u, true, line.data()); // capture waits for line 0
+    t.Expect(bus.video().LcdcBank16(0u, 5u * 256u) == 0u, "capture starts only at line 0");
+    for (uint32_t y = 0u; y < 192u; ++y) {
+        bus.engine(0).RenderLine(y, true, line.data());
+    }
+    t.Expect(bus.video().LcdcBank16(0u, 0u) == 0x9234u && bus.video().LcdcBank16(0u, 191u * 256u + 255u) == 0x9234u,
+        "capture writes engine A's colour, opaque, over the whole 256x192 area");
+    t.Expect((arm9.Read32(0x04000064u) & 0x80000000u) == 0u, "capture clears its enable bit when the frame ends");
+
+    // Blend source A with source B (the bank as it is now) at EVA = EVB = 8: the same colour comes back.
+    arm9.Write32(0x04000064u, 0xC0300808u);        // enable, A+B blended, EVA 8, EVB 8
+    for (uint32_t y = 0u; y < 192u; ++y) {
+        bus.engine(0).RenderLine(y, true, line.data());
+    }
+    t.Expect(bus.video().LcdcBank16(0u, 100u * 256u + 7u) == 0x9234u, "A+B capture blends by EVA/EVB");
+}
+
 void TestIndsBackupMemory(TestContext& t) {
     const auto dir = MakeTempRoot() / "inds-backup";
     std::filesystem::create_directories(dir);
@@ -3817,7 +3844,7 @@ int RunUnitTests() {
         void (*fn)(TestContext&);
     };
 
-    const std::array<NamedTest, 71> tests = {{
+    const std::array<NamedTest, 72> tests = {{
         {"frontend_settings", &TestFrontendSettings},
         {"arm_v5_clz_and_saturation", &TestArmV5ClzAndSaturation},
         {"arm_v5_halfword_multiplies", &TestArmV5HalfwordMultiplies},
@@ -3873,6 +3900,7 @@ int RunUnitTests() {
         {"inds_vram_banking", &TestIndsVramBanking},
         {"inds_cartridge_reads", &TestIndsCartridgeReads},
         {"inds_card_key1_boot", &TestIndsCardKey1Boot},
+        {"inds_display_capture", &TestIndsDisplayCapture},
         {"inds_backup_memory", &TestIndsBackupMemory},
         {"inds_geometry_and_wifi_stubs", &TestIndsGeometryAndWifiStubs},
         {"inds_sound", &TestIndsSound},

@@ -223,4 +223,15 @@ uint16_t VideoMemory::LcdcBank16(uint32_t bank, uint32_t pixel) const noexcept {
     return static_cast<uint16_t>(data[offset] | (data[offset + 1u] << 8u));
 }
 
+
+void VideoMemory::WriteLcdcBank16(uint32_t bank, uint32_t pixel, uint16_t value) noexcept {
+    if (bank >= banks_.size() || (control_[bank] & (0x80u | kMstMask[bank])) != 0x80u) {
+        return;
+    }
+    auto& data = banks_[bank];
+    const uint32_t offset = (pixel * 2u) % data.size();
+    data[offset] = static_cast<uint8_t>(value);
+    data[offset + 1u] = static_cast<uint8_t>(value >> 8u);
+}
+
 } // namespace emugbds::inds

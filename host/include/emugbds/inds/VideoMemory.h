@@ -49,6 +49,8 @@ public:
     const uint8_t* oam(int engine) const noexcept { return &oam_[engine * 0x400u]; }
     // 16-bit pixel `pixel` of a bank in LCDC mode (VRAM display mode); 0 otherwise.
     uint16_t LcdcBank16(uint32_t bank, uint32_t pixel) const noexcept;
+    // Display capture's write into a bank in LCDC mode; ignored for a bank mapped elsewhere.
+    void WriteLcdcBank16(uint32_t bank, uint32_t pixel, uint16_t value) noexcept;
 
 private:
     void Remap();
