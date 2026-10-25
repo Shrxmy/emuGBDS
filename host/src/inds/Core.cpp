@@ -92,7 +92,7 @@ bool Core::CpuHost::OnCoprocessorWrite(uint32_t coprocessor, uint32_t opcode1, u
     }
     core_.arm9_.set_load_interworking(core_.bus_.cp15().load_interworking());
     if (crn == 1u || crn == 9u) { // control (caches, TCM enables) or TCM regions
-        core_.bus_.RefreshAccessTimes();
+        core_.bus_.RefreshCpuMaps();
     }
     return true;
 }

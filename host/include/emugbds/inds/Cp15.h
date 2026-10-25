@@ -33,6 +33,8 @@ public:
     uint32_t exception_base() const noexcept { return (control_ & (1u << 13)) != 0u ? 0xFFFF0000u : 0u; }
     // Control bit 15 restores ARMv4 behavior for loads into PC (no Thumb interworking).
     bool load_interworking() const noexcept { return (control_ & (1u << 15)) == 0u; }
+    // Changes whenever the control register or a TCM region changes (anything that moves the memory map).
+    uint32_t map_revision() const noexcept { return map_revision_; }
     bool ConsumeHaltRequest() noexcept {
         const bool requested = halt_requested_;
         halt_requested_ = false;
@@ -50,6 +52,7 @@ private:
     uint32_t itcm_region_ = 0u;
     uint32_t dtcm_region_ = 0u;
     bool halt_requested_ = false;
+    uint32_t map_revision_ = 0u;
     std::map<uint32_t, uint32_t> stored_; // Cache/PU registers: kept for read-back only.
 };
 

@@ -12,6 +12,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <map>
 #include <string>
@@ -90,8 +91,8 @@ public:
 
     // The ARM9's CP15 lives here because its TCM settings decide the ARM9 memory map.
     Cp15& cp15() noexcept { return cp15_; }
-    // Rebuilds the CPUs' access cost tables; call after CP15 cache or TCM settings change.
-    void RefreshAccessTimes();
+    // Rebuilds the CPUs' access cost tables and TCM windows; call after CP15 cache or TCM settings change.
+    void RefreshCpuMaps();
     const Cp15& cp15() const noexcept { return cp15_; }
     VideoMemory& video() noexcept { return video_; }
     const VideoMemory& video() const noexcept { return video_; }
@@ -109,12 +110,12 @@ private:
     class View final : public arm::IBus {
     public:
         View(MemoryBus& memory, bool arm9) noexcept : memory_(memory), arm9_(arm9) {}
-        uint8_t Read8(uint32_t address) const override { return static_cast<uint8_t>(memory_.Read(arm9_, address, 1u)); }
-        uint16_t Read16(uint32_t address) const override { return static_cast<uint16_t>(memory_.Read(arm9_, address, 2u)); }
-        uint32_t Read32(uint32_t address) const override { return memory_.Read(arm9_, address, 4u); }
-        void Write8(uint32_t address, uint8_t value) override { memory_.Write(arm9_, address, value, 1u); }
-        void Write16(uint32_t address, uint16_t value) override { memory_.Write(arm9_, address, value, 2u); }
-        void Write32(uint32_t address, uint32_t value) override { memory_.Write(arm9_, address, value, 4u); }
+        uint8_t Read8(uint32_t address) const override { return DirectRead<uint8_t>(address); }
+        uint16_t Read16(uint32_t address) const override { return DirectRead<uint16_t>(address); }
+        uint32_t Read32(uint32_t address) const override { return DirectRead<uint32_t>(address); }
+        void Write8(uint32_t address, uint8_t value) override { DirectWrite(address, value); }
+        void Write16(uint32_t address, uint16_t value) override { DirectWrite(address, value); }
+        void Write32(uint32_t address, uint32_t value) override { DirectWrite(address, value); }
         uint32_t AccessCycles(uint32_t address, uint32_t width, bool sequential, bool code) const override {
             return memory_.AccessCycles(arm9_, address, width, sequential, code);
         }
@@ -123,9 +124,71 @@ private:
         }
 
     private:
+        // Plain memory straight from its backing store; the rest through the full decode.
+        template <typename T>
+        T DirectRead(uint32_t address) const {
+            const uint8_t* bytes = memory_.DirectPointer(arm9_, address, false);
+            if (bytes == nullptr || (address & (sizeof(T) - 1u)) != 0u) {
+                return static_cast<T>(memory_.Read(arm9_, address, sizeof(T)));
+            }
+            T value;
+            std::memcpy(&value, bytes, sizeof(T)); // little-endian host
+            return value;
+        }
+        template <typename T>
+        void DirectWrite(uint32_t address, T value) {
+            uint8_t* bytes = memory_.DirectPointer(arm9_, address, true);
+            if (bytes == nullptr || (address & (sizeof(T) - 1u)) != 0u) {
+                memory_.Write(arm9_, address, value, sizeof(T));
+                return;
+            }
+            std::memcpy(bytes, &value, sizeof(T));
+        }
+
         MemoryBus& memory_;
         bool arm9_;
     };
+
+    // A plain-memory region for DirectPointer: [start, start + size) maps to base[(address - start) & mask].
+    struct DirectRegion {
+        uint8_t* base = nullptr;
+        uint32_t start = 0;
+        uint32_t size = 0;
+        uint32_t mask = 0;
+        bool writable = false;
+    };
+    // The ARM9's TCMs as Arm9Pointer sees them (a TCM in load mode only takes writes).
+    struct TcmWindows {
+        uint64_t itcm_read_end = 0; // [0, end)
+        uint64_t itcm_write_end = 0;
+        uint32_t dtcm_base = 0;
+        uint64_t dtcm_read_size = 0;
+        uint64_t dtcm_write_size = 0;
+        uint32_t revision = ~0u; // Cp15::map_revision these were built from
+    };
+
+    // Arm9Pointer/Arm7Pointer for the plain memory CPUs use most (TCM, main RAM, ARM7 WRAM, BIOS);
+    // nullptr means the address needs the full decode.
+    uint8_t* DirectPointer(bool arm9, uint32_t address, bool write) noexcept {
+        if (arm9) {
+            if (cp15_.map_revision() != tcm_.revision) {
+                RefreshCpuMaps(); // CP15 was written directly (tests, debug), not through the core
+            }
+            if (address < (write ? tcm_.itcm_write_end : tcm_.itcm_read_end)) {
+                return &itcm_[address & (Cp15::kItcmPhysicalSize - 1u)];
+            }
+            if (static_cast<uint32_t>(address - tcm_.dtcm_base) < (write ? tcm_.dtcm_write_size : tcm_.dtcm_read_size)) {
+                return &dtcm_[(address - tcm_.dtcm_base) & (Cp15::kDtcmPhysicalSize - 1u)];
+            }
+        }
+        const DirectRegion& region = direct_[arm9 ? 0 : 1][address >> 24u];
+        if (address - region.start >= region.size || (write && !region.writable)) {
+            return nullptr;
+        }
+        return region.base + ((address - region.start) & region.mask);
+    }
+    // Points the direct regions at the backing stores; call after a BIOS is loaded.
+    void RefreshDirectRegions();
 
     uint32_t Read(bool arm9, uint32_t address, uint32_t size, bool use_tcm = true) const;
     // GBATEK "DS Memory Timings", in the CPU's own clock: ARM7 cycles, or ARM9 cycles (twice the bus clock).
@@ -153,6 +216,8 @@ private:
     Cp15 cp15_{};
     arm::AccessTimes arm9_times_{};
     arm::AccessTimes arm7_times_{};
+    TcmWindows tcm_{};
+    std::array<std::array<DirectRegion, 256>, 2> direct_{}; // ARM9, ARM7; by address bits 24-31
     VideoMemory video_{};
     std::array<Engine2d, 2> engines_{Engine2d{video_, 0}, Engine2d{video_, 1}};
     Io io_{*this};

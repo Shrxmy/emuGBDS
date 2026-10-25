@@ -32,17 +32,38 @@ MemoryBus::MemoryBus()
       itcm_(Cp15::kItcmPhysicalSize, 0u),
       dtcm_(Cp15::kDtcmPhysicalSize, 0u) {
     cp15_.Reset();
-    RefreshAccessTimes();
+    RefreshCpuMaps();
+    RefreshDirectRegions();
     io_.card().AttachRom(&nds_rom_);
     io_.Reset();
 }
 
 bool MemoryBus::LoadBios7(const std::filesystem::path& bios_path, std::string& error) {
-    return LoadWholeFile(bios_path, bios7_, error);
+    const bool loaded = LoadWholeFile(bios_path, bios7_, error);
+    RefreshDirectRegions();
+    return loaded;
 }
 
 bool MemoryBus::LoadBios9(const std::filesystem::path& bios_path, std::string& error) {
-    return LoadWholeFile(bios_path, bios9_, error);
+    const bool loaded = LoadWholeFile(bios_path, bios9_, error);
+    RefreshDirectRegions();
+    return loaded;
+}
+
+
+void MemoryBus::RefreshDirectRegions() {
+    direct_ = {};
+    for (auto& cpu : direct_) {
+        cpu[0x02u] = {main_ram_.data(), kMainRamBase, 0x01000000u, kMainRamSize - 1u, true};
+    }
+    direct_[1][0x03u] = {arm7_wram_.data(), 0x03800000u, 0x00800000u, kArm7WramSize - 1u, true};
+    if (!bios7_.empty()) {
+        direct_[1][0x00u] = {bios7_.data(), 0u, static_cast<uint32_t>(bios7_.size()), 0xFFFFFFFFu, false};
+    }
+    const size_t bios9_size = bios9_.size();
+    if (bios9_size != 0u && (bios9_size & (bios9_size - 1u)) == 0u) { // mirrors by masking
+        direct_[0][0xFFu] = {bios9_.data(), kArm9BiosBase, kArm9BiosRegionSize, static_cast<uint32_t>(bios9_size - 1u), false};
+    }
 }
 
 bool MemoryBus::LoadFirmware(const std::filesystem::path& firmware_path, std::string& error) {
@@ -103,7 +124,7 @@ void MemoryBus::ResetMemory() {
     }
     wramcnt_ = 3u; // Power-on: all shared WRAM belongs to the ARM7.
     cp15_.Reset();
-    RefreshAccessTimes();
+    RefreshCpuMaps();
     video_.Reset();
     for (Engine2d& engine : engines_) {
         engine.Reset();
@@ -190,7 +211,7 @@ uint32_t MemoryBus::AccessCycles(bool arm9, uint32_t address, uint32_t width, bo
 }
 
 
-void MemoryBus::RefreshAccessTimes() {
+void MemoryBus::RefreshCpuMaps() {
     // Index 0Fh stands for the BIOS at FFFF0000h (the table uses address bits 24-27).
     for (uint32_t region = 0u; region < 16u; ++region) {
         for (int code = 0; code < 2; ++code) {
@@ -208,6 +229,13 @@ void MemoryBus::RefreshAccessTimes() {
     arm9_times_.itcm_end = cp15_.itcm_enabled() ? static_cast<uint32_t>(std::min<uint64_t>(cp15_.itcm_size(), 0xFFFFFFFFu)) : 0u;
     arm9_times_.dtcm_base = cp15_.dtcm_base();
     arm9_times_.dtcm_size = cp15_.dtcm_enabled() ? static_cast<uint32_t>(std::min<uint64_t>(cp15_.dtcm_size(), 0xFFFFFFFFu)) : 0u;
+
+    tcm_.itcm_write_end = cp15_.itcm_enabled() ? cp15_.itcm_size() : 0u;
+    tcm_.itcm_read_end = cp15_.itcm_load_mode() ? 0u : tcm_.itcm_write_end;
+    tcm_.dtcm_base = cp15_.dtcm_base();
+    tcm_.dtcm_write_size = cp15_.dtcm_enabled() ? cp15_.dtcm_size() : 0u;
+    tcm_.dtcm_read_size = cp15_.dtcm_load_mode() ? 0u : tcm_.dtcm_write_size;
+    tcm_.revision = cp15_.map_revision();
 }
 
 

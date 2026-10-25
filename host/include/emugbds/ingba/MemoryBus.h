@@ -15,7 +15,7 @@ namespace emugbds::ingba {
 
 class MemoryBus final : public arm::IBus {
 public:
-    MemoryBus() noexcept { RefreshAccessTimes(); }
+    MemoryBus() noexcept;
     bool LoadBios(const std::filesystem::path& bios_path, std::string& error);
     bool LoadRom(const std::filesystem::path& rom_path, std::string& error);
     bool HasBios() const noexcept { return bios_loaded_; }

@@ -19,6 +19,7 @@ void Cp15::Reset() noexcept {
     control_ = kControlFixed | (1u << 13); // The DS boots with exception vectors at FFFF0000h.
     itcm_region_ = 0u;
     dtcm_region_ = 0u;
+    ++map_revision_;
     halt_requested_ = false;
     stored_.clear();
 }
@@ -59,10 +60,12 @@ bool Cp15::Write(uint32_t opcode1, uint32_t crn, uint32_t crm, uint32_t opcode2,
     }
     if (crn == 1u && crm == 0u && opcode2 == 0u) {
         control_ = (value & kControlWritable) | kControlFixed;
+        ++map_revision_;
         return true;
     }
     if (crn == 9u && crm == 1u) {
         (opcode2 == 0u ? dtcm_region_ : itcm_region_) = value & 0xFFFFF03Eu;
+        ++map_revision_;
         return true;
     }
     if (crn == 7u) {

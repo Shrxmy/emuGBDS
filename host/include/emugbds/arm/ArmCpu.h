@@ -180,13 +180,14 @@ private:
 
     private:
         uint32_t Cost(uint32_t address, uint32_t width, bool sequential, bool code) const {
-            if (times_ == nullptr) {
-                return UntabledCost(address, width, sequential, code);
+            return times_ != nullptr ? TableCost(*times_, address, width, sequential, code)
+                                     : UntabledCost(address, width, sequential, code);
+        }
+        static uint32_t TableCost(const AccessTimes& times, uint32_t address, uint32_t width, bool sequential, bool code) {
+            if (address < times.itcm_end || (!code && address - times.dtcm_base < times.dtcm_size)) {
+                return times.tcm_cost;
             }
-            if (address < times_->itcm_end || (!code && address - times_->dtcm_base < times_->dtcm_size)) {
-                return times_->tcm_cost;
-            }
-            return times_->cost[(address >> 24u) & 0xFu][code ? 1 : 0][sequential ? 1 : 0][width == 4u ? 1 : 0];
+            return times.cost[(address >> 24u) & 0xFu][code ? 1 : 0][sequential ? 1 : 0][width == 4u ? 1 : 0];
         }
         // Looks the table up on first use (the table lives in the bus, so its address is stable);
         // buses without one answer through AccessCycles.
@@ -195,7 +196,7 @@ private:
                 times_checked_ = true;
                 times_ = bus_.access_times();
                 if (times_ != nullptr) {
-                    return Cost(address, width, sequential, code);
+                    return TableCost(*times_, address, width, sequential, code);
                 }
             }
             return bus_.AccessCycles(address, width, sequential, code);

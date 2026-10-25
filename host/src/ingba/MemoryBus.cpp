@@ -555,6 +555,11 @@ void MemoryBus::WriteGpio(uint32_t address, uint16_t value) noexcept {
 }
 
 
+MemoryBus::MemoryBus() noexcept {
+    RefreshAccessTimes();
+}
+
+
 void MemoryBus::RefreshAccessTimes() noexcept {
     for (uint32_t region = 0u; region < 16u; ++region) {
         for (int code = 0; code < 2; ++code) {

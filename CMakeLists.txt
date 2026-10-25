@@ -21,6 +21,9 @@ check_ipo_supported(RESULT EMUGBDS_IPO_SUPPORTED OUTPUT EMUGBDS_IPO_ERROR LANGUA
 if(EMUGBDS_IPO_SUPPORTED)
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
 endif()
+# MSVC's default /Ob2 leaves the interpreter's small per-access helpers as calls; /Ob3 inlines them
+# (Thumb code runs about 1.5x faster).
+add_compile_options("$<$<AND:$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Release>>:/Ob3>")
 
 set(EMUGBDS_SDL2_TARGET "")
 find_package(SDL2 QUIET CONFIG)

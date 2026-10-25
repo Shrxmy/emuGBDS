@@ -1275,7 +1275,7 @@ void TestCpuCycleTiming(TestContext& t) {
     emugbds::inds::MemoryBus ds;
     ds.cp15().Write(0u, 9u, 1u, 0u, 0x0200000Au); // DTCM over 02000000h
     ds.cp15().Write(0u, 1u, 0u, 0u, 1u << 16);
-    ds.RefreshAccessTimes();
+    ds.RefreshCpuMaps();
     const AccessTimes& arm9 = *ds.arm9().access_times();
     t.Expect(arm9.dtcm_base == 0x02000000u && arm9.dtcm_size != 0u && ds.arm9().AccessCycles(0x02000000u, 4u, false, false) == 1u,
         "DS ARM9 access table follows the DTCM");
