@@ -5,6 +5,7 @@
 #include "emugbds/ingba/VideoConstants.h"
 
 #include <algorithm>
+#include <iostream>
 
 namespace emugbds::ingba {
 
@@ -24,7 +25,7 @@ bool Core::LoadBios(const std::filesystem::path& bios_path, std::string& error) 
 
 
 bool Core::LoadRom(const std::filesystem::path& rom_path, std::string& error) {
-    if (!bus_.LoadRom(rom_path, error)) {
+    if (!FlushSave(error) || !bus_.LoadRom(rom_path, error)) { // the old game's save is written first
         return false;
     }
     rom_loaded_ = true;
@@ -114,7 +115,30 @@ bool Core::RunFrame(std::string& error) {
 
     UpdateVideoFrame();
     ++frame_counter_;
+    FlushSaveWhenIdle();
     return true;
+}
+
+
+void Core::FlushSaveWhenIdle() {
+    // Save after the game has stopped writing for a second, so bursts of writes cost one file write.
+    constexpr uint32_t kIdleFrames = 60u;
+    const Backup& backup = bus_.backup();
+    if (backup.revision() != save_revision_) {
+        save_revision_ = backup.revision();
+        save_idle_frames_ = 0u;
+    } else if (backup.dirty() && ++save_idle_frames_ >= kIdleFrames) {
+        std::string error;
+        if (!FlushSave(error)) {
+            std::cerr << "[ingba] " << error << "\n";
+            save_idle_frames_ = 0u; // retry after another quiet second
+        }
+    }
+}
+
+
+bool Core::FlushSave(std::string& error) {
+    return bus_.backup().Flush(error);
 }
 
 

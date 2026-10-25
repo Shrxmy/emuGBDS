@@ -2,6 +2,7 @@
 
 #include "emugbds/arm/Bus.h"
 #include "emugbds/ingba/Apu.h"
+#include "emugbds/ingba/Backup.h"
 
 #include <array>
 #include <cstdint>
@@ -39,6 +40,8 @@ public:
     uint64_t dispcnt_write_count() const noexcept { return dispcnt_write_count_; }
     uint16_t last_dispcnt_written() const noexcept { return last_dispcnt_written_; }
     Apu& apu() noexcept { return apu_; }
+    // The cartridge save chip; LoadRom picks its type and loads <rom>.sav.
+    Backup& backup() noexcept { return backup_; }
     const Apu& apu() const noexcept { return apu_; }
 
     uint8_t Read8(uint32_t address) const override;
@@ -59,23 +62,12 @@ private:
     static bool DecodeTimerCountAddress(uint32_t address, uint32_t& timer, bool& high_byte) noexcept;
     void IncrementTimer(uint32_t timer, uint32_t increments) noexcept;
     const uint8_t* DirectReadPointer(uint32_t address, uint32_t size) const noexcept;
-    uint8_t ReadFlash(uint32_t address) const noexcept;
-    void WriteFlash(uint32_t address, uint8_t value) noexcept;
-    void ResetFlashCommandState() noexcept;
-
-    enum class FlashCommandState : uint8_t {
-        Ready,
-        Unlock1,
-        Unlock2,
-        EraseUnlock1,
-        EraseUnlock2,
-        EraseCommand,
-        Program,
-        BankSelect,
-    };
-
-    static constexpr size_t kFlashSize = 0x00020000u;
-    static constexpr size_t kFlashSectorSize = 0x00001000u;
+    // An EEPROM sits in the top of the ROM area: all of D000000h-DFFFFFFh for ROMs up to 16 MiB,
+    // else DFFFF00h-DFFFFFFh (GBATEK "GBA Cart Backup EEPROM").
+    bool InEepromWindow(uint32_t address) const noexcept {
+        return backup_.type() == BackupType::Eeprom && (address >> 24u) == 0x0Du &&
+            (rom_.size() <= 0x01000000u || address >= 0x0DFFFF00u);
+    }
     static constexpr size_t kPaletteSize = 0x00000400u;
     static constexpr size_t kVramSize = 0x00018000u;
     static constexpr size_t kOamSize = 0x00000400u;
@@ -85,10 +77,8 @@ private:
     std::vector<uint8_t> ewram_;
     std::vector<uint8_t> iwram_;
     std::vector<uint8_t> rom_;
-    std::array<uint8_t, kFlashSize> flash_{};
-    FlashCommandState flash_command_state_ = FlashCommandState::Ready;
-    bool flash_id_mode_ = false;
-    uint8_t flash_bank_ = 0u;
+    // EEPROM reads shift the chip's serial output, so const reads may change it.
+    mutable Backup backup_{};
     std::array<uint8_t, kPaletteSize> palette_{};
     std::array<uint8_t, kVramSize> vram_{};
     std::array<uint8_t, kOamSize> oam_{};

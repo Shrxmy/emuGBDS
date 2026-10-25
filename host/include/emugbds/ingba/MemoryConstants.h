@@ -22,7 +22,7 @@ inline constexpr uint32_t kVramBase = 0x06000000u;
 inline constexpr uint32_t kOamBase = 0x07000000u;
 inline constexpr uint32_t kRomBase = 0x08000000u;
 inline constexpr uint32_t kSaveBase = 0x0E000000u;
-inline constexpr uint32_t kSaveWindowSize = 0x00010000u;
+inline constexpr uint32_t kSaveEnd = 0x10000000u; // SRAM/FLASH mirrors fill E000000h-FFFFFFFh
 
 inline constexpr size_t kBiosSize = 0x00004000u;
 inline constexpr size_t kEwramSize = 0x00040000u;

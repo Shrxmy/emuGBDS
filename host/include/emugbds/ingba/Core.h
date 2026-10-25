@@ -29,6 +29,8 @@ public:
     // HALT stops the CPU, not the emulation core; timing and video continue.
     bool IsRunning() const noexcept { return initialized_ && rom_loaded_; }
     void ApplyInputMasks(uint32_t press_mask, uint32_t release_mask) noexcept;
+    // Writes the cartridge save file now if it changed (also done after writes settle).
+    bool FlushSave(std::string& error);
     uint16_t keyinput_state() const noexcept { return bus_.keyinput_state(); }
     const uint32_t* video_pixels() const noexcept { return video_buffer_.data(); }
     uint32_t video_width() const noexcept { return kVideoWidth; }
@@ -68,6 +70,7 @@ private:
     void AdvanceLcdTiming(uint32_t elapsed_cycles) noexcept;
     void CaptureVideoScanlineState(uint16_t scanline) noexcept;
     void UpdateVideoFrame();
+    void FlushSaveWhenIdle();
 
     static constexpr uint32_t kVideoWidth = 240u;
     static constexpr uint32_t kVideoHeight = 160u;
@@ -103,6 +106,8 @@ private:
     uint64_t frame_counter_ = 0;
     uint8_t last_unsupported_swi_ = 0;
     uint8_t hidden_layers_ = 0;
+    uint64_t save_revision_ = 0;
+    uint32_t save_idle_frames_ = 0;
 };
 
 } // namespace emugbds::ingba

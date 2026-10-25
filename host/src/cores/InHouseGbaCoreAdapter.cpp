@@ -1,5 +1,7 @@
 #include "emugbds/cores/InHouseGbaCoreAdapter.h"
 
+#include <iostream>
+
 namespace emugbds::cores {
 
 core::EmuMode InHouseGbaCoreAdapter::mode() const noexcept {
@@ -58,6 +60,10 @@ bool InHouseGbaCoreAdapter::IsRunning() const noexcept {
 }
 
 void InHouseGbaCoreAdapter::Shutdown() noexcept {
+    std::string error;
+    if (initialized_ && !core_->FlushSave(error)) {
+        std::cerr << "[ingba] " << error << "\n";
+    }
     initialized_ = false;
     loaded_ = false;
 }

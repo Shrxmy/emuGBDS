@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -341,6 +342,135 @@ void EmitFixtures(const std::filesystem::path& dir) {
     WriteFile(dir / "firmware.bin", BuildBytes(0x20000u, 0xF0));
 }
 
+void TestIngbaBackup(TestContext& t) {
+    using emugbds::ingba::Backup;
+    using emugbds::ingba::BackupType;
+    const auto dir = MakeTempRoot() / "ingba-backup";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    std::string error;
+
+    const std::vector<uint8_t> rom = BuildSyntheticGbaRom();
+    const auto with_id = [&](const char* id, size_t offset = 0x400u) {
+        std::vector<uint8_t> bytes = rom;
+        std::memcpy(bytes.data() + offset, id, std::strlen(id));
+        return bytes;
+    };
+    t.Expect(Backup::Detect(rom) == BackupType::None, "a ROM without an ID string has no save chip");
+    t.Expect(Backup::Detect(with_id("SRAM_V113")) == BackupType::Sram &&
+        Backup::Detect(with_id("SRAM_F_V102")) == BackupType::Sram &&
+        Backup::Detect(with_id("EEPROM_V124")) == BackupType::Eeprom &&
+        Backup::Detect(with_id("FLASH_V126")) == BackupType::Flash64K &&
+        Backup::Detect(with_id("FLASH512_V131")) == BackupType::Flash64K &&
+        Backup::Detect(with_id("FLASH1M_V103")) == BackupType::Flash128K,
+        "GBATEK's backup ID strings select the save chip");
+    t.Expect(Backup::Detect(with_id("SRAM_V113", 0x401u)) == BackupType::None, "ID strings must be word aligned");
+
+    // SRAM through the bus: an 8-bit bus mirrored every 32 KiB, saved to <rom>.sav.
+    WriteFile(dir / "sram.gba", with_id("SRAM_V113"));
+    {
+        emugbds::ingba::MemoryBus bus;
+        t.Expect(bus.LoadRom(dir / "sram.gba", error), "an SRAM game loads");
+        bus.Write8(0x0E000010u, 0x42u);
+        t.Expect(bus.Read8(0x0E008010u) == 0x42u && bus.Read8(0x0FFF8010u) == 0x42u, "SRAM mirrors every 32 KiB up to FFFFFFFh");
+        t.Expect(bus.Read16(0x0E000010u) == 0x4242u && bus.Read32(0x0E000010u) == 0x42424242u,
+            "wider SRAM reads repeat the byte (8-bit bus)");
+        bus.Write16(0x0E000020u, 0x1234u);
+        t.Expect(bus.Read8(0x0E000020u) == 0x34u && bus.Read8(0x0E000021u) == 0xFFu, "a halfword store reaches SRAM as one byte");
+        t.Expect(bus.backup().dirty() && bus.backup().Flush(error) && std::filesystem::file_size(dir / "sram.sav") == 0x8000u &&
+            !std::filesystem::exists(dir / "sram.sav.tmp"), "SRAM is written to a 32 KiB save file");
+    }
+    {
+        emugbds::ingba::MemoryBus bus;
+        t.Expect(bus.LoadRom(dir / "sram.gba", error) && bus.Read8(0x0E000010u) == 0x42u && !bus.backup().dirty(),
+            "the save file loads back with the ROM");
+    }
+
+    // FLASH 64K: Macronix ID 1CC2h and a single bank.
+    const auto command = [](Backup& chip, uint8_t value) {
+        chip.Write8(0x5555u, 0xAAu);
+        chip.Write8(0x2AAAu, 0x55u);
+        chip.Write8(0x5555u, value);
+    };
+    Backup flash;
+    t.Expect(flash.Load(BackupType::Flash64K, dir / "flash64.sav", error), "a blank 64K FLASH starts");
+    command(flash, 0x90u);
+    t.Expect(flash.Read8(0u) == 0xC2u && flash.Read8(1u) == 0x1Cu, "64K FLASH identifies as Macronix 1CC2h");
+    flash.Write8(0u, 0xF0u);
+    command(flash, 0xA0u);
+    flash.Write8(0x0123u, 0x5Au);
+    command(flash, 0xB0u);
+    flash.Write8(0u, 1u);
+    t.Expect(flash.Read8(0x0123u) == 0x5Au, "64K FLASH ignores bank switching");
+    t.Expect(flash.Flush(error) && std::filesystem::file_size(dir / "flash64.sav") == 0x10000u, "64K FLASH saves 64 KiB");
+    Backup larger;
+    t.Expect(larger.Load(BackupType::Flash128K, dir / "flash64.sav", error) && larger.Read8(0x0123u) == 0x5Au &&
+        larger.data().size() == 0x20000u, "a 64 KiB save loads into the first bank of a 128K chip");
+    Backup smaller;
+    error.clear();
+    t.Expect(!smaller.Load(BackupType::Sram, dir / "flash64.sav", error) && !error.empty(),
+        "a save file larger than the chip is refused, not truncated");
+
+    // EEPROM, driven by DMA3 bit streams the way games do it (one bit per halfword).
+    WriteFile(dir / "eeprom.gba", with_id("EEPROM_V124"));
+    emugbds::ingba::MemoryBus bus;
+    error.clear();
+    t.Expect(bus.LoadRom(dir / "eeprom.gba", error), "an EEPROM game loads");
+    const auto dma3 = [&](uint32_t source, uint32_t destination, uint32_t count) {
+        bus.Write32(0x040000D4u, source);
+        bus.Write32(0x040000D8u, destination);
+        bus.Write32(0x040000DCu, count | (0x8000u << 16u)); // enable, immediate, 16-bit, incrementing
+    };
+    const auto send = [&](const std::vector<uint8_t>& bits) {
+        for (size_t i = 0u; i < bits.size(); ++i) {
+            bus.Write16(0x02000000u + static_cast<uint32_t>(i) * 2u, bits[i]);
+        }
+        dma3(0x02000000u, 0x0D000000u, static_cast<uint32_t>(bits.size()));
+    };
+    const auto append = [](std::vector<uint8_t>& bits, uint64_t value, uint32_t count) {
+        for (uint32_t i = count; i-- > 0u;) {
+            bits.push_back(static_cast<uint8_t>((value >> i) & 1u));
+        }
+    };
+    std::vector<uint8_t> write = {1u, 0u};
+    append(write, 3u, 6u);                     // block 3 (6-bit address: a 512-byte chip)
+    append(write, 0x0123456789ABCDEFull, 64u);
+    write.push_back(0u);
+    send(write);
+    t.Expect(bus.Read16(0x0D000000u) == 1u, "the EEPROM reports ready after a write");
+    std::vector<uint8_t> read = {1u, 1u};
+    append(read, 3u, 6u);
+    read.push_back(0u);
+    send(read);
+    dma3(0x0D000000u, 0x02001000u, 68u);
+    uint64_t value = 0u;
+    for (uint32_t i = 4u; i < 68u; ++i) {
+        value = (value << 1u) | (bus.Read16(0x02001000u + i * 2u) & 1u);
+    }
+    t.Expect(value == 0x0123456789ABCDEFull, "the EEPROM reads back what was written, after 4 dummy bits");
+    t.Expect(bus.backup().data().size() == 0x200u && bus.backup().Flush(error) &&
+        std::filesystem::file_size(dir / "eeprom.sav") == 0x200u, "a 6-bit address means a 512-byte EEPROM save");
+    t.Expect(bus.Read8(0x08000000u) == rom[0], "ROM below the EEPROM window still reads normally");
+
+    // The same 512-byte save used with 14-bit addresses grows to 8K; block 3 keeps its place.
+    write = {1u, 0u};
+    append(write, 64u, 14u);
+    append(write, 0xFEDCBA9876543210ull, 64u);
+    write.push_back(0u);
+    send(write);
+    t.Expect(bus.backup().data().size() == 0x2000u && bus.backup().data()[3u * 8u] == 0x01u &&
+        bus.backup().data()[64u * 8u] == 0xFEu, "a 14-bit EEPROM address grows a 512-byte save to 8K without aliasing");
+
+    // A ROM whose save is refused leaves the running game's save chip in place.
+    emugbds::ingba::MemoryBus keep;
+    t.Expect(keep.LoadRom(dir / "sram.gba", error), "an SRAM game loads before a failing one");
+    WriteFile(dir / "oversize.gba", with_id("SRAM_V113"));
+    WriteFile(dir / "oversize.sav", std::vector<uint8_t>(0x10000u, 0u));
+    error.clear();
+    t.Expect(!keep.LoadRom(dir / "oversize.gba", error) && keep.backup().type() == BackupType::Sram &&
+        keep.Read8(0x0E000010u) == 0x42u, "a refused save file does not replace the running game's save");
+}
+
 void TestIngbaMemoryBus(TestContext& t) {
     const auto dir = MakeTempRoot() / "ingba-memory-bus";
     std::filesystem::create_directories(dir);
@@ -371,8 +501,10 @@ void TestIngbaMemoryBus(TestContext& t) {
     t.Expect(bus.Read8(0x03007FF8u) == 0xA5u, "ingba IWRAM mirror writes the base BIOS flag slot");
 
     const auto gba_rom = dir / "test.gba";
-    const auto rom_bytes = BuildSyntheticGbaRom();
+    auto rom_bytes = BuildSyntheticGbaRom();
+    std::memcpy(rom_bytes.data() + 0x200u, "FLASH1M_V103", 12u); // ask for the 128K FLASH chip
     WriteFile(gba_rom, rom_bytes);
+    std::filesystem::remove(dir / "test.sav");
     error.clear();
     t.Expect(bus.LoadRom(gba_rom, error), "ingba bus loads ROM");
     t.Expect(bus.Read8(kGbaRomBase) == rom_bytes[0], "ingba ROM read at base works");
@@ -3275,7 +3407,7 @@ int RunUnitTests() {
         void (*fn)(TestContext&);
     };
 
-    const std::array<NamedTest, 65> tests = {{
+    const std::array<NamedTest, 66> tests = {{
         {"frontend_settings", &TestFrontendSettings},
         {"arm_v5_clz_and_saturation", &TestArmV5ClzAndSaturation},
         {"arm_v5_halfword_multiplies", &TestArmV5HalfwordMultiplies},
@@ -3283,6 +3415,7 @@ int RunUnitTests() {
         {"arm_memory_additions", &TestArmMemoryAdditions},
         {"arm_v5_coprocessor_transfers", &TestArmV5CoprocessorTransfers},
         {"ingba_memory_bus", &TestIngbaMemoryBus},
+        {"ingba_backup", &TestIngbaBackup},
         {"ingba_core_run_frame", &TestIngbaCoreRunFrame},
         {"ingba_cpu_fiq_banking", &TestIngbaCpuFiqBanking},
         {"ingba_fiq_user_bank_transfers", &TestIngbaFiqUserBankTransfers},

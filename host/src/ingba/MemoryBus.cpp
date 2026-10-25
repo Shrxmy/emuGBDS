@@ -41,10 +41,14 @@ bool MemoryBus::LoadRom(const std::filesystem::path& rom_path, std::string& erro
         return false;
     }
 
+    std::filesystem::path save_path = rom_path;
+    save_path.replace_extension(".sav");
+    Backup backup; // the running game keeps its save chip if this load fails
+    if (!backup.Load(Backup::Detect(rom_image), save_path, error)) {
+        return false;
+    }
+    backup_ = std::move(backup);
     rom_ = std::move(rom_image);
-    std::fill(flash_.begin(), flash_.end(), 0xFFu);
-    flash_bank_ = 0u;
-    ResetFlashCommandState();
     apu_.Reset();
     if (ewram_.empty()) {
         ewram_.assign(kEwramSize, 0);
@@ -230,110 +234,6 @@ uint32_t MemoryBus::CyclesUntilTimerOverflow() const noexcept {
     return earliest;
 }
 
-uint8_t MemoryBus::ReadFlash(uint32_t address) const noexcept {
-    const uint32_t offset = (address - kSaveBase) & (kSaveWindowSize - 1u);
-    if (flash_id_mode_) {
-        if (offset == 0u) {
-            return 0xC2u; // Macronix-compatible manufacturer ID used by Emerald.
-        }
-        if (offset == 1u) {
-            return 0x09u; // 128 KiB flash device ID.
-        }
-        return 0xFFu;
-    }
-
-    const size_t bank_offset = static_cast<size_t>(flash_bank_ & 1u) * kSaveWindowSize;
-    return flash_[bank_offset + offset];
-}
-
-void MemoryBus::ResetFlashCommandState() noexcept {
-    flash_command_state_ = FlashCommandState::Ready;
-    flash_id_mode_ = false;
-}
-
-void MemoryBus::WriteFlash(uint32_t address, uint8_t value) noexcept {
-    const uint32_t offset = (address - kSaveBase) & (kSaveWindowSize - 1u);
-    if (value == 0xF0u && flash_command_state_ != FlashCommandState::Program) {
-        ResetFlashCommandState();
-        return;
-    }
-
-    switch (flash_command_state_) {
-    case FlashCommandState::Ready:
-        if (offset == 0x5555u && value == 0xAAu) {
-            flash_command_state_ = FlashCommandState::Unlock1;
-        }
-        return;
-    case FlashCommandState::Unlock1:
-        if (offset == 0x2AAAu && value == 0x55u) {
-            flash_command_state_ = FlashCommandState::Unlock2;
-        } else {
-            ResetFlashCommandState();
-        }
-        return;
-    case FlashCommandState::Unlock2:
-        if (offset != 0x5555u) {
-            ResetFlashCommandState();
-            return;
-        }
-        switch (value) {
-        case 0x90u:
-            flash_id_mode_ = true;
-            flash_command_state_ = FlashCommandState::Ready;
-            break;
-        case 0xA0u:
-            flash_command_state_ = FlashCommandState::Program;
-            break;
-        case 0x80u:
-            flash_command_state_ = FlashCommandState::EraseUnlock1;
-            break;
-        case 0xB0u:
-            flash_command_state_ = FlashCommandState::BankSelect;
-            break;
-        default:
-            ResetFlashCommandState();
-            break;
-        }
-        return;
-    case FlashCommandState::EraseUnlock1:
-        if (offset == 0x5555u && value == 0xAAu) {
-            flash_command_state_ = FlashCommandState::EraseUnlock2;
-        } else {
-            ResetFlashCommandState();
-        }
-        return;
-    case FlashCommandState::EraseUnlock2:
-        if (offset == 0x2AAAu && value == 0x55u) {
-            flash_command_state_ = FlashCommandState::EraseCommand;
-        } else {
-            ResetFlashCommandState();
-        }
-        return;
-    case FlashCommandState::EraseCommand:
-        if (offset == 0x5555u && value == 0x10u) {
-            std::fill(flash_.begin(), flash_.end(), 0xFFu);
-        } else if (value == 0x30u) {
-            const size_t bank_offset = static_cast<size_t>(flash_bank_ & 1u) * kSaveWindowSize;
-            const size_t sector_offset = static_cast<size_t>(offset) & ~(kFlashSectorSize - 1u);
-            std::fill_n(flash_.begin() + bank_offset + sector_offset, kFlashSectorSize, 0xFFu);
-        }
-        ResetFlashCommandState();
-        return;
-    case FlashCommandState::Program: {
-        const size_t bank_offset = static_cast<size_t>(flash_bank_ & 1u) * kSaveWindowSize;
-        flash_[bank_offset + offset] &= value;
-        ResetFlashCommandState();
-        return;
-    }
-    case FlashCommandState::BankSelect:
-        if (offset == 0u) {
-            flash_bank_ = static_cast<uint8_t>(value & 1u);
-        }
-        ResetFlashCommandState();
-        return;
-    }
-}
-
 void MemoryBus::TryStartImmediateDma(uint32_t control_high_address, uint8_t previous_control_high) {
     for (uint32_t channel = 0; channel < kDmaControlHighByteAddresses.size(); ++channel) {
         if (kDmaControlHighByteAddresses[channel] != control_high_address) {
@@ -444,6 +344,9 @@ void MemoryBus::ExecuteDmaTransfer(uint32_t channel, bool timed_trigger) {
         }
     };
 
+    if (channel == 3u && InEepromWindow(destination)) {
+        backup_.BeginEepromStream(units); // the chip decodes the command once all its bits arrive
+    }
     const int32_t source_delta = compute_delta(source_control, true);
     const int32_t destination_delta = fifo_mode ? 0 : compute_delta(destination_control, false);
 
@@ -547,8 +450,11 @@ uint8_t MemoryBus::Read8(uint32_t address) const {
     if (address == kKeyInputAddress + 1u) {
         return static_cast<uint8_t>((keyinput_state_ >> 8u) & 0xFFu);
     }
-    if (address >= kSaveBase && address < kSaveBase + kSaveWindowSize) {
-        return ReadFlash(address);
+    if (address >= kSaveBase && address < kSaveEnd) {
+        return backup_.Read8(address - kSaveBase);
+    }
+    if (InEepromWindow(address)) {
+        return static_cast<uint8_t>(backup_.ReadEepromBit());
     }
     if (address >= kRomBase && address < kSaveBase && !rom_.empty()) {
         const uint32_t rom_offset = (address - kRomBase) % static_cast<uint32_t>(rom_.size());
@@ -585,8 +491,10 @@ const uint8_t* MemoryBus::DirectReadPointer(uint32_t address, uint32_t size) con
         return vram_.data() + NormalizeVramOffset(address);
     case 0x07u:
         return oam_.data() + ((address - kOamBase) % oam_.size());
-    case 0x08u: case 0x09u: case 0x0Au: case 0x0Bu: case 0x0Cu: case 0x0Du:
+    case 0x08u: case 0x09u: case 0x0Au: case 0x0Bu: case 0x0Cu:
         return mirrored(rom_, kRomBase);
+    case 0x0Du:
+        return InEepromWindow(address) ? nullptr : mirrored(rom_, kRomBase);
     default:
         return nullptr;
     }
@@ -596,6 +504,12 @@ const uint8_t* MemoryBus::DirectReadPointer(uint32_t address, uint32_t size) con
 uint16_t MemoryBus::Read16(uint32_t address) const {
     if (const uint8_t* bytes = DirectReadPointer(address, 2u)) {
         return static_cast<uint16_t>(bytes[0] | (bytes[1] << 8u));
+    }
+    if (InEepromWindow(address)) {
+        return backup_.ReadEepromBit(); // one serial bit per halfword
+    }
+    if (address >= kSaveBase && address < kSaveEnd) {
+        return static_cast<uint16_t>(Read8(address) * 0x0101u); // 8-bit bus: the byte appears in both halves
     }
     const uint16_t lo = Read8(address);
     const uint16_t hi = Read8(address + 1);
@@ -607,6 +521,12 @@ uint32_t MemoryBus::Read32(uint32_t address) const {
     if (const uint8_t* bytes = DirectReadPointer(address, 4u)) {
         return static_cast<uint32_t>(bytes[0]) | (static_cast<uint32_t>(bytes[1]) << 8u) |
             (static_cast<uint32_t>(bytes[2]) << 16u) | (static_cast<uint32_t>(bytes[3]) << 24u);
+    }
+    if (InEepromWindow(address)) {
+        return backup_.ReadEepromBit();
+    }
+    if (address >= kSaveBase && address < kSaveEnd) {
+        return Read8(address) * 0x01010101u;
     }
     const uint32_t b0 = Read8(address);
     const uint32_t b1 = Read8(address + 1);
@@ -732,8 +652,8 @@ void MemoryBus::Write8(uint32_t address, uint8_t value) {
     if (address >= kOamBase && address < kOamBase + 0x01000000u) {
         return; // OAM accepts only halfword and word writes.
     }
-    if (address >= kSaveBase && address < kSaveBase + kSaveWindowSize) {
-        WriteFlash(address, value);
+    if (address >= kSaveBase && address < kSaveEnd) {
+        backup_.Write8(address - kSaveBase, value);
         return;
     }
 }
@@ -758,6 +678,14 @@ void MemoryBus::Write16(uint32_t address, uint16_t value) {
         oam_[(offset + 1u) & (oam_.size() - 1u)] = static_cast<uint8_t>(value >> 8u);
         return;
     }
+    if (InEepromWindow(address)) {
+        backup_.WriteEepromBit(value);
+        return;
+    }
+    if (address >= kSaveBase && address < kSaveEnd) {
+        Write8(address, static_cast<uint8_t>(value)); // 8-bit bus: one byte reaches the chip
+        return;
+    }
     Write8(address, static_cast<uint8_t>(value & 0xFFu));
     Write8(address + 1u, static_cast<uint8_t>(value >> 8u));
 }
@@ -765,6 +693,10 @@ void MemoryBus::Write16(uint32_t address, uint16_t value) {
 
 void MemoryBus::Write32(uint32_t address, uint32_t value) {
     address &= ~3u;
+    if (address >= kSaveBase && address < kSaveEnd) {
+        Write8(address, static_cast<uint8_t>(value));
+        return;
+    }
     Write16(address, static_cast<uint16_t>(value & 0xFFFFu));
     Write16(address + 2u, static_cast<uint16_t>(value >> 16u));
 }

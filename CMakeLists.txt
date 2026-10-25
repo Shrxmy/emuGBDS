@@ -76,6 +76,12 @@ set(EMUGBDS_INHOUSE_GBA_SOURCES
     host/src/ingba/Swi.cpp
     host/src/ingba/Video.cpp
     host/src/ingba/Apu.cpp
+    host/src/ingba/Backup.cpp
+)
+
+# Shared by both cores.
+set(EMUGBDS_CORE_COMMON_SOURCES
+    host/src/core/SaveFile.cpp
 )
 
 set(EMUGBDS_INHOUSE_DS_SOURCES
@@ -112,6 +118,7 @@ add_executable(emugbds
     ${EMUGBDS_ARM_CPU_SOURCES}
     ${EMUGBDS_INHOUSE_GBA_SOURCES}
     ${EMUGBDS_INHOUSE_DS_SOURCES}
+    ${EMUGBDS_CORE_COMMON_SOURCES}
     host/src/gba/GbaCartridgeHeader.cpp
     host/src/nds/NdsCartridgeHeader.cpp
     host/src/cores/InHouseDsCoreAdapter.cpp
@@ -179,6 +186,7 @@ if(BUILD_TESTING)
         ${EMUGBDS_ARM_CPU_SOURCES}
         ${EMUGBDS_INHOUSE_GBA_SOURCES}
         ${EMUGBDS_INHOUSE_DS_SOURCES}
+        ${EMUGBDS_CORE_COMMON_SOURCES}
         host/src/gba/GbaCartridgeHeader.cpp
         host/src/nds/NdsCartridgeHeader.cpp
     )

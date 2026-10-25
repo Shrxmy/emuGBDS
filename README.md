@@ -49,7 +49,8 @@ Or start a game straight away (the window opens unless `--frames` is given):
 The menus cover pause / frame step / fast-forward, window size, DS screen
 layout, fullscreen, BIOS paths, key bindings, the DS save chip type, and debug
 panels (live CPU/IO state, BG/OBJ layer toggles, screenshots, memory dumps).
-Settings are kept in `emugbds.ini` next to the executable; screenshots (BMP)
+GBA and DS games save to `<rom>.sav` next to the ROM (GBA: SRAM, FLASH, or
+EEPROM, picked from the ROM). Settings are kept in `emugbds.ini` next to the executable; screenshots (BMP)
 and memory dumps go to `screenshots\` and `dumps\` there.
 
 Headless in-house GBA smoke run:

@@ -1,5 +1,7 @@
 #include "emugbds/inds/Backup.h"
 
+#include "emugbds/core/SaveFile.h"
+
 #include <algorithm>
 #include <fstream>
 #include <iterator>
@@ -222,23 +224,7 @@ bool Backup::Flush(std::string& error) {
     if (!dirty_ || path_.empty() || data_.empty()) {
         return true;
     }
-    // Write a temporary file first so a failure never leaves a truncated save behind.
-    std::filesystem::path temporary = path_;
-    temporary += ".tmp";
-    {
-        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-        output.write(reinterpret_cast<const char*>(data_.data()), static_cast<std::streamsize>(data_.size()));
-        output.flush();
-        output.close();
-        if (output.fail()) {
-            error = "Failed to write save file: " + temporary.string();
-            return false;
-        }
-    }
-    std::error_code rename_error;
-    std::filesystem::rename(temporary, path_, rename_error);
-    if (rename_error) {
-        error = "Failed to replace save file " + path_.string() + ": " + rename_error.message();
+    if (!core::WriteFileReplacing(path_, data_, error)) {
         return false;
     }
     dirty_ = false;
