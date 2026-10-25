@@ -141,6 +141,8 @@ private:
 
     // Layout
     bool ShowingDs() const noexcept { return texture_height_ == 2u * kDsScreenHeight; }
+    bool FastForward() const noexcept { return fast_forward_toggle_ || fast_forward_hold_ || trigger_fast_forward_; }
+    void UpdateStick();
     int Screens(std::array<SDL_Rect, 2>& src, std::array<SDL_Rect, 2>& dst) const;
     void ResizeWindow();
     void ToggleFullscreen();
@@ -202,6 +204,14 @@ private:
     bool show_save_chip_ = false;
     bool show_debug_ = false;
     int capture_button_ = -1;
+    int capture_pad_button_ = -1;
+    SDL_GameController* pad_ = nullptr;
+    std::array<SDL_GameControllerButton, Settings::kButtonCount> pad_bindings_{};
+    uint32_t pad_mask_ = 0u;            // gamepad buttons, as game buttons
+    uint32_t stick_mask_ = 0u;          // the left stick as the D-pad
+    bool trigger_fast_forward_ = false; // right trigger held
+    bool auto_paused_ = false;          // paused because the window lost focus
+    std::vector<int16_t> audio_scaled_;
     std::array<std::array<char, 1024>, 4> path_edit_{};
     int save_chip_choice_ = 4;
     bool confirm_save_chip_ = false;
@@ -248,7 +258,7 @@ bool App::Run(uint64_t& executed_frames, std::string& error) {
         menu_height_ = static_cast<int>(ImGui::GetFrameHeight());
         DrawUi();
 
-        const bool fast = fast_forward_toggle_ || fast_forward_hold_;
+        const bool fast = FastForward();
         const bool emulate = session_ && (!paused_ || step_);
         if (emulate) {
             RunEmulation(frame_begin);
@@ -306,6 +316,10 @@ bool App::InitSdl(std::string& error) {
     if (audio_device_ == 0) {
         std::cerr << "[audio] disabled: " << SDL_GetError() << "\n";
     }
+    // Gamepads are optional too; connected ones arrive as SDL_CONTROLLERDEVICEADDED events.
+    if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0) {
+        std::cerr << "[gamepad] disabled: " << SDL_GetError() << "\n";
+    }
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -327,6 +341,10 @@ void App::ShutdownSdl() {
     }
     if (audio_device_ != 0) {
         SDL_CloseAudioDevice(audio_device_);
+    }
+    if (pad_) {
+        SDL_GameControllerClose(pad_);
+        pad_ = nullptr;
     }
     if (texture_) {
         SDL_DestroyTexture(texture_);
@@ -379,7 +397,9 @@ void App::SaveSettings() {
 void App::RebuildBindings() {
     for (size_t i = 0; i < Settings::kButtonCount; ++i) {
         bindings_[i] = SDL_GetScancodeFromName(settings_.keys[i].c_str());
+        pad_bindings_[i] = SDL_GameControllerGetButtonFromString(settings_.pad[i].c_str());
     }
+    pad_mask_ = 0u;
     held_mask_ = 0u; // a held key may no longer map to its button; the release reaches the core next frame
 }
 
@@ -432,7 +452,13 @@ void App::ResolvePaths(runtime::BootConfig& config) const {
     fill(config.nds_bios7_path, settings_.nds_bios7);
     fill(config.nds_bios9_path, settings_.nds_bios9);
     fill(config.nds_firmware_path, settings_.nds_firmware);
-    boot::ResolveDefaultBootPaths(config);
+    // Besides the working folder, look for bios/ next to the executable and two folders up
+    // (a build folder such as build/Release inside the project).
+    std::filesystem::path base = BasePath();
+    if (!base.has_filename()) {
+        base = base.parent_path(); // SDL's base path ends with a separator
+    }
+    boot::ResolveDefaultBootPaths(config, {base, base.parent_path(), base.parent_path().parent_path()});
     if (options_.no_gba_bios) {
         config.gba_bios_path.reset();
     }
@@ -580,11 +606,72 @@ void App::HandleEvent(const SDL_Event& event) {
     case SDL_WINDOWEVENT:
         if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
             held_mask_ = 0u; // keys released while unfocused never send KEYUP
+            pad_mask_ = 0u;
+            stick_mask_ = 0u;
             mouse_down_ = false;
             fast_forward_hold_ = false;
+            trigger_fast_forward_ = false;
+            if (settings_.pause_on_focus_loss && session_ && !paused_) {
+                paused_ = true;
+                auto_paused_ = true;
+            }
+        } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED && auto_paused_) {
+            paused_ = false;
+            auto_paused_ = false;
         }
         break;
+    case SDL_CONTROLLERDEVICEADDED:
+        if (!pad_) {
+            pad_ = SDL_GameControllerOpen(event.cdevice.which);
+            if (pad_) {
+                ShowStatus(std::string("Gamepad: ") + SDL_GameControllerName(pad_));
+            }
+        }
+        break;
+    case SDL_CONTROLLERDEVICEREMOVED:
+        if (pad_ && event.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(pad_))) {
+            SDL_GameControllerClose(pad_);
+            pad_ = nullptr;
+            pad_mask_ = 0u;
+            stick_mask_ = 0u;
+            trigger_fast_forward_ = false;
+            ShowStatus("Gamepad disconnected");
+        }
+        break;
+    case SDL_CONTROLLERBUTTONDOWN:
+        if (capture_pad_button_ >= 0) {
+            const char* name = SDL_GameControllerGetStringForButton(static_cast<SDL_GameControllerButton>(event.cbutton.button));
+            if (name != nullptr) {
+                settings_.pad[static_cast<size_t>(capture_pad_button_)] = name;
+                RebuildBindings();
+                SaveSettings();
+            }
+            capture_pad_button_ = -1;
+            break;
+        }
+        for (size_t i = 0; i < Settings::kButtonCount; ++i) {
+            if (pad_bindings_[i] != SDL_CONTROLLER_BUTTON_INVALID && pad_bindings_[i] == event.cbutton.button) {
+                pad_mask_ |= 1u << i;
+            }
+        }
+        break;
+    case SDL_CONTROLLERBUTTONUP:
+        for (size_t i = 0; i < Settings::kButtonCount; ++i) {
+            if (pad_bindings_[i] == event.cbutton.button) {
+                pad_mask_ &= ~(1u << i);
+            }
+        }
+        break;
+    case SDL_CONTROLLERAXISMOTION:
+        UpdateStick();
+        break;
     case SDL_KEYDOWN:
+        if (capture_pad_button_ >= 0) {
+            if (event.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
+                capture_pad_button_ = -1;
+            }
+            break;
+        }
         if (capture_button_ >= 0) {
             if (event.key.keysym.scancode != SDL_SCANCODE_ESCAPE) {
                 settings_.keys[static_cast<size_t>(capture_button_)] = SDL_GetScancodeName(event.key.keysym.scancode);
@@ -640,7 +727,16 @@ void App::HandleHotkey(const SDL_KeyboardEvent& key) {
     const bool ctrl = (key.keysym.mod & KMOD_CTRL) != 0;
     switch (key.keysym.scancode) {
     case SDL_SCANCODE_ESCAPE:
-        quit_ = true;
+        if (fullscreen_) {
+            ToggleFullscreen(); // the first Esc only leaves fullscreen
+        } else {
+            quit_ = true;
+        }
+        break;
+    case SDL_SCANCODE_M:
+        settings_.muted = !settings_.muted;
+        SaveSettings();
+        ShowStatus(settings_.muted ? "Sound muted" : "Sound on");
         break;
     case SDL_SCANCODE_O:
         if (ctrl) {
@@ -655,6 +751,7 @@ void App::HandleHotkey(const SDL_KeyboardEvent& key) {
         break;
     case SDL_SCANCODE_P:
         paused_ = session_ && !paused_;
+        auto_paused_ = false;
         break;
     case SDL_SCANCODE_N:
         step_ = paused_;
@@ -677,11 +774,30 @@ void App::HandleHotkey(const SDL_KeyboardEvent& key) {
 }
 
 
+// The left stick acts as the D-pad past half deflection; the right trigger holds fast-forward.
+void App::UpdateStick() {
+    constexpr int kThreshold = 16384;
+    stick_mask_ = 0u;
+    trigger_fast_forward_ = false;
+    if (!pad_) {
+        return;
+    }
+    const int x = SDL_GameControllerGetAxis(pad_, SDL_CONTROLLER_AXIS_LEFTX);
+    const int y = SDL_GameControllerGetAxis(pad_, SDL_CONTROLLER_AXIS_LEFTY);
+    using input::GbaKey;
+    using input::GbaKeyMask;
+    stick_mask_ |= x > kThreshold ? GbaKeyMask(GbaKey::Right) : x < -kThreshold ? GbaKeyMask(GbaKey::Left) : 0u;
+    stick_mask_ |= y > kThreshold ? GbaKeyMask(GbaKey::Down) : y < -kThreshold ? GbaKeyMask(GbaKey::Up) : 0u;
+    trigger_fast_forward_ = SDL_GameControllerGetAxis(pad_, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > kThreshold;
+}
+
+
 void App::SendInput() {
     runtime::InputSnapshot input{};
-    input.gba_press_mask = held_mask_ & ~previous_mask_;
-    input.gba_release_mask = previous_mask_ & ~held_mask_;
-    previous_mask_ = held_mask_;
+    const uint32_t held = held_mask_ | pad_mask_ | stick_mask_;
+    input.gba_press_mask = held & ~previous_mask_;
+    input.gba_release_mask = previous_mask_ & ~held;
+    previous_mask_ = held;
     std::array<SDL_Rect, 2> src{};
     std::array<SDL_Rect, 2> dst{};
     if (mouse_down_ && ShowingDs() && Screens(src, dst) == 2) {
@@ -713,7 +829,7 @@ void App::RunEmulation(Clock::time_point frame_begin) {
     session_->ds().SetHiddenLayers(1, hidden_layers_[2]);
     SendInput();
 
-    const bool fast = !step_ && (fast_forward_toggle_ || fast_forward_hold_);
+    const bool fast = !step_ && (FastForward());
     if (!fast) {
         TickOnce(!step_);
         return;
@@ -753,8 +869,17 @@ bool App::TickOnce(bool queue_audio) {
                 // Uncapped runs or a stalled device outpace playback; drop instead of lagging.
                 SDL_ClearQueuedAudio(audio_device_);
             }
-            SDL_QueueAudio(audio_device_, output.audio->samples,
-                static_cast<uint32_t>(output.audio->sample_count * sizeof(int16_t)));
+            // Muted output still queues (silent) samples, so the queue keeps pacing the emulation.
+            const int16_t* samples = output.audio->samples;
+            const int volume = settings_.muted ? 0 : settings_.volume;
+            if (volume < 100) {
+                audio_scaled_.assign(samples, samples + output.audio->sample_count);
+                for (int16_t& sample : audio_scaled_) {
+                    sample = static_cast<int16_t>(sample * volume / 100);
+                }
+                samples = audio_scaled_.data();
+            }
+            SDL_QueueAudio(audio_device_, samples, static_cast<uint32_t>(output.audio->sample_count * sizeof(int16_t)));
         }
     }
     return options_.frame_limit == 0u || executed_frames_ < options_.frame_limit;
@@ -1029,6 +1154,21 @@ void App::DrawMenuBar() {
         if (ImGui::MenuItem("Controls...")) {
             show_controls_ = true;
         }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Mute", "M", settings_.muted)) {
+            settings_.muted = !settings_.muted;
+            SaveSettings();
+        }
+        ImGui::SetNextItemWidth(160.0f);
+        ImGui::SliderInt("Volume", &settings_.volume, 0, 100, "%d%%");
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            SaveSettings();
+        }
+        if (ImGui::MenuItem("Pause when the window loses focus", nullptr, settings_.pause_on_focus_loss)) {
+            settings_.pause_on_focus_loss = !settings_.pause_on_focus_loss;
+            SaveSettings();
+        }
+        ImGui::Separator();
         if (ImGui::MenuItem("DS save chip...", nullptr, false, DsSavePath().has_value())) {
             show_save_chip_ = true;
         }
@@ -1097,8 +1237,11 @@ void App::DrawMenuBar() {
         right = text;
         if (paused_) {
             right += "  paused";
-        } else if (fast_forward_toggle_ || fast_forward_hold_) {
+        } else if (FastForward()) {
             right += "  fast-forward";
+        }
+        if (settings_.muted) {
+            right += "  muted";
         }
     }
     if (!right.empty()) {
@@ -1116,7 +1259,7 @@ void App::DrawSettingsWindow() {
     }
     ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_Appearing);
     if (ImGui::Begin("BIOS & boot", &show_settings_)) {
-        ImGui::TextWrapped("Leave a path empty to use the file under bios/ in the working folder. "
+        ImGui::TextWrapped("Leave a path empty to use the file under bios/ in the working folder or next to the app. "
                            "Changes apply the next time a game starts.");
         for (int i = 0; i < 4; ++i) {
             ImGui::PushID(i);
@@ -1151,20 +1294,31 @@ void App::DrawControlsWindow() {
     if (!show_controls_) {
         return;
     }
-    ImGui::SetNextWindowSize(ImVec2(380.0f, 0.0f), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(480.0f, 0.0f), ImGuiCond_Appearing);
     if (ImGui::Begin("Controls", &show_controls_)) {
-        ImGui::TextWrapped("Click a key, then press the new one (Esc cancels).");
-        if (ImGui::BeginTable("keys", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV)) {
+        ImGui::TextWrapped("Click a key or gamepad button, then press the new one (Esc cancels).");
+        ImGui::TextDisabled("%s", pad_ ? SDL_GameControllerName(pad_) : "No gamepad connected");
+        if (ImGui::BeginTable("keys", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV)) {
+            ImGui::TableSetupColumn("Button");
+            ImGui::TableSetupColumn("Keyboard");
+            ImGui::TableSetupColumn("Gamepad");
+            ImGui::TableHeadersRow();
             for (size_t i = 0; i < Settings::kButtonCount; ++i) {
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 ImGui::TextUnformatted(Settings::kButtonNames[i]);
-                ImGui::TableNextColumn();
                 ImGui::PushID(static_cast<int>(i));
+                ImGui::TableNextColumn();
                 const bool capturing = capture_button_ == static_cast<int>(i);
-                const std::string label = capturing ? std::string("Press a key...") : settings_.keys[i];
-                if (ImGui::Button(label.c_str(), ImVec2(-1.0f, 0.0f))) {
+                if (ImGui::Button(capturing ? "Press a key..." : settings_.keys[i].c_str(), ImVec2(-1.0f, 0.0f))) {
                     capture_button_ = static_cast<int>(i);
+                    capture_pad_button_ = -1;
+                }
+                ImGui::TableNextColumn();
+                const bool capturing_pad = capture_pad_button_ == static_cast<int>(i);
+                if (ImGui::Button(capturing_pad ? "Press a button..." : settings_.pad[i].c_str(), ImVec2(-1.0f, 0.0f))) {
+                    capture_pad_button_ = static_cast<int>(i);
+                    capture_button_ = -1;
                 }
                 ImGui::PopID();
             }
@@ -1172,13 +1326,15 @@ void App::DrawControlsWindow() {
         }
         if (ImGui::Button("Restore defaults")) {
             settings_.keys = Settings{}.keys;
+            settings_.pad = Settings{}.pad;
             RebuildBindings();
             SaveSettings();
         }
         ImGui::SeparatorText("Hotkeys");
-        ImGui::TextDisabled("Ctrl+O open  Ctrl+R reset  P pause  N step frame\n"
-                            "Tab fast-forward  F1 debug panel  F11 fullscreen\n"
-                            "F12 screenshot  Esc exit  Mouse = DS touchscreen");
+        ImGui::TextDisabled("Ctrl+O open  Ctrl+R reset  P pause  N step frame  M mute\n"
+                            "Tab (or right trigger) fast-forward  F1 debug panel\n"
+                            "F11 fullscreen  F12 screenshot  Esc leave fullscreen / exit\n"
+                            "Left stick = D-pad  Mouse = DS touchscreen");
     }
     ImGui::End();
 }

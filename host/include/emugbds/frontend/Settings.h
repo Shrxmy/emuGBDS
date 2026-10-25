@@ -22,7 +22,7 @@ struct Settings {
     static constexpr std::array<const char*, kButtonCount> kButtonNames = {
         "A", "B", "Select", "Start", "Right", "Left", "Up", "Down", "R", "L", "X", "Y"};
 
-    // Empty paths fall back to the files under bios/ in the working directory.
+    // Empty paths fall back to the files under bios/ in the working directory or near the executable.
     std::string gba_bios;
     std::string nds_bios7;
     std::string nds_bios9;
@@ -34,9 +34,16 @@ struct Settings {
     DsLayout ds_layout = DsLayout::Vertical;
     int fast_forward_speed = 4; // emulated frames per shown frame; 0 = unlimited
     bool gba_via_ds_firmware = false;
+    int volume = 100; // percent
+    bool muted = false;
+    bool pause_on_focus_loss = false;
     // SDL scancode names, one per game button.
     std::array<std::string, kButtonCount> keys = {
         "Z", "X", "Right Shift", "Return", "Right", "Left", "Up", "Down", "S", "A", "D", "C"};
+    // SDL game controller button names, one per game button. The face buttons follow their
+    // position on a Nintendo pad: the right button (Xbox B) is A, the bottom one (Xbox A) is B.
+    std::array<std::string, kButtonCount> pad = {
+        "b", "a", "back", "start", "dpright", "dpleft", "dpup", "dpdown", "rightshoulder", "leftshoulder", "y", "x"};
 
     void AddRecentRom(const std::string& path);
     // A missing file leaves the defaults and succeeds.

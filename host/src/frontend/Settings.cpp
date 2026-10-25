@@ -77,10 +77,22 @@ bool Settings::Load(const std::filesystem::path& path, std::string& error) {
             ReadInt(value, 0, 16, fast_forward_speed);
         } else if (key == "gba_via_ds_firmware") {
             gba_via_ds_firmware = value == "1";
+        } else if (key == "volume") {
+            ReadInt(value, 0, 100, volume);
+        } else if (key == "muted") {
+            muted = value == "1";
+        } else if (key == "pause_on_focus_loss") {
+            pause_on_focus_loss = value == "1";
         } else if (key.rfind("key.", 0) == 0 && !value.empty()) {
             for (size_t i = 0; i < kButtonCount; ++i) {
                 if (key.compare(4, std::string::npos, kButtonNames[i]) == 0) {
                     keys[i] = value;
+                }
+            }
+        } else if (key.rfind("pad.", 0) == 0 && !value.empty()) {
+            for (size_t i = 0; i < kButtonCount; ++i) {
+                if (key.compare(4, std::string::npos, kButtonNames[i]) == 0) {
+                    pad[i] = value;
                 }
             }
         }
@@ -118,9 +130,15 @@ bool Settings::Save(const std::filesystem::path& path, std::string& error) const
                << "ds_scale=" << ds_scale << "\n"
                << "ds_layout=" << (ds_layout == DsLayout::Horizontal ? "horizontal" : "vertical") << "\n"
                << "fast_forward_speed=" << fast_forward_speed << "\n"
-               << "gba_via_ds_firmware=" << (gba_via_ds_firmware ? 1 : 0) << "\n";
+               << "gba_via_ds_firmware=" << (gba_via_ds_firmware ? 1 : 0) << "\n"
+               << "volume=" << volume << "\n"
+               << "muted=" << (muted ? 1 : 0) << "\n"
+               << "pause_on_focus_loss=" << (pause_on_focus_loss ? 1 : 0) << "\n";
         for (size_t i = 0; i < kButtonCount; ++i) {
             output << "key." << kButtonNames[i] << "=" << keys[i] << "\n";
+        }
+        for (size_t i = 0; i < kButtonCount; ++i) {
+            output << "pad." << kButtonNames[i] << "=" << pad[i] << "\n";
         }
         output.flush();
         if (output.fail()) {

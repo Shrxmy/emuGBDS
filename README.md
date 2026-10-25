@@ -102,11 +102,18 @@ Interactive controls:
 - `S` = `R`
 - `D` = `X`, `C` = `Y` (DS)
 - Left mouse button on the bottom screen = DS touchscreen
-- `Esc` = exit interactive loop
+- `Esc` = leave fullscreen, or exit when windowed
+- Gamepad (SDL game controllers, plugged in any time): face buttons by
+  position as on a Nintendo pad (right = A, bottom = B, top = X, left = Y),
+  D-pad or left stick, shoulders = L/R, Back/Start = Select/Start, right
+  trigger = fast-forward
 
-Game keys can be changed in Settings > Controls. Hotkeys: `Ctrl+O` open,
-`Ctrl+R` reset, `P` pause, `N` step one frame (while paused), hold `Tab` to
-fast-forward, `F1` CPU/IO panel, `F11` fullscreen, `F12` screenshot.
+Keyboard keys and gamepad buttons can be changed in Settings > Controls.
+Hotkeys: `Ctrl+O` open, `Ctrl+R` reset, `P` pause, `N` step one frame (while
+paused), hold `Tab` to fast-forward, `M` mute, `F1` CPU/IO panel, `F11`
+fullscreen, `F12` screenshot. Settings also has a volume slider and a "pause
+when the window loses focus" option. BIOS files are found under `bios\` in the
+working folder, next to the executable, or two folders above it.
 
 ## Test
 

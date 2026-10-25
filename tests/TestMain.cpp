@@ -3573,6 +3573,10 @@ void TestFrontendSettings(TestContext& t) {
     settings.fast_forward_speed = 0;
     settings.gba_via_ds_firmware = true;
     settings.keys[3] = "Space";
+    settings.pad[0] = "a";
+    settings.volume = 35;
+    settings.muted = true;
+    settings.pause_on_focus_loss = true;
     t.Expect(settings.Save(path, error), "settings save");
     t.Expect(!std::filesystem::exists(dir / "emugbds.ini.tmp"), "saving leaves no temporary file");
     Settings reloaded;
@@ -3581,7 +3585,8 @@ void TestFrontendSettings(TestContext& t) {
         reloaded.nds_bios7.empty() && reloaded.last_directory == "D:/roms" &&
         reloaded.recent_roms == settings.recent_roms && reloaded.ds_scale == 4 &&
         reloaded.ds_layout == DsLayout::Horizontal && reloaded.fast_forward_speed == 0 &&
-        reloaded.gba_via_ds_firmware && reloaded.keys == settings.keys, "every setting survives a save and load");
+        reloaded.gba_via_ds_firmware && reloaded.keys == settings.keys && reloaded.pad == settings.pad &&
+        reloaded.volume == 35 && reloaded.muted && reloaded.pause_on_focus_loss, "every setting survives a save and load");
 
     {
         std::ofstream edited(path, std::ios::trunc);

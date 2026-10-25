@@ -1,51 +1,55 @@
 #include "emugbds/boot/BootPolicy.h"
 
+#include <system_error>
+
 namespace emugbds::boot {
+namespace {
 
-std::optional<std::filesystem::path> DetectDefaultGbaBios() {
-    const std::filesystem::path default_path = std::filesystem::path("bios") / "gb-bios" / "gba_bios.bin";
-    if (!std::filesystem::exists(default_path)) {
-        return std::nullopt;
+std::optional<std::filesystem::path> Find(const std::filesystem::path& relative,
+                                          const std::vector<std::filesystem::path>& extra_roots) {
+    std::error_code error;
+    if (std::filesystem::exists(relative, error)) {
+        return relative;
     }
-    return default_path;
+    for (const std::filesystem::path& root : extra_roots) {
+        const std::filesystem::path candidate = root / relative;
+        if (std::filesystem::exists(candidate, error)) {
+            return candidate;
+        }
+    }
+    return std::nullopt;
 }
 
-std::optional<std::filesystem::path> DetectDefaultNdsBios7() {
-    const std::filesystem::path default_path = std::filesystem::path("bios") / "nds-bios" / "biosnds7.bin";
-    if (!std::filesystem::exists(default_path)) {
-        return std::nullopt;
-    }
-    return default_path;
+} // namespace
+
+std::optional<std::filesystem::path> DetectDefaultGbaBios(const std::vector<std::filesystem::path>& extra_roots) {
+    return Find(std::filesystem::path("bios") / "gb-bios" / "gba_bios.bin", extra_roots);
 }
 
-std::optional<std::filesystem::path> DetectDefaultNdsBios9() {
-    const std::filesystem::path default_path = std::filesystem::path("bios") / "nds-bios" / "biosnds9.bin";
-    if (!std::filesystem::exists(default_path)) {
-        return std::nullopt;
-    }
-    return default_path;
+std::optional<std::filesystem::path> DetectDefaultNdsBios7(const std::vector<std::filesystem::path>& extra_roots) {
+    return Find(std::filesystem::path("bios") / "nds-bios" / "biosnds7.bin", extra_roots);
 }
 
-std::optional<std::filesystem::path> DetectDefaultNdsFirmware() {
-    const std::filesystem::path default_path = std::filesystem::path("bios") / "nds-bios" / "dsfirmware.bin";
-    if (!std::filesystem::exists(default_path)) {
-        return std::nullopt;
-    }
-    return default_path;
+std::optional<std::filesystem::path> DetectDefaultNdsBios9(const std::vector<std::filesystem::path>& extra_roots) {
+    return Find(std::filesystem::path("bios") / "nds-bios" / "biosnds9.bin", extra_roots);
 }
 
-void ResolveDefaultBootPaths(runtime::BootConfig& config) {
+std::optional<std::filesystem::path> DetectDefaultNdsFirmware(const std::vector<std::filesystem::path>& extra_roots) {
+    return Find(std::filesystem::path("bios") / "nds-bios" / "dsfirmware.bin", extra_roots);
+}
+
+void ResolveDefaultBootPaths(runtime::BootConfig& config, const std::vector<std::filesystem::path>& extra_roots) {
     if (!config.gba_bios_path.has_value()) {
-        config.gba_bios_path = DetectDefaultGbaBios();
+        config.gba_bios_path = DetectDefaultGbaBios(extra_roots);
     }
     if (!config.nds_bios7_path.has_value()) {
-        config.nds_bios7_path = DetectDefaultNdsBios7();
+        config.nds_bios7_path = DetectDefaultNdsBios7(extra_roots);
     }
     if (!config.nds_bios9_path.has_value()) {
-        config.nds_bios9_path = DetectDefaultNdsBios9();
+        config.nds_bios9_path = DetectDefaultNdsBios9(extra_roots);
     }
     if (!config.nds_firmware_path.has_value()) {
-        config.nds_firmware_path = DetectDefaultNdsFirmware();
+        config.nds_firmware_path = DetectDefaultNdsFirmware(extra_roots);
     }
 
     if (config.ds_boot_mode != core::DsBootMode::Auto) {
