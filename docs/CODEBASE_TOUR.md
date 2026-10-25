@@ -112,16 +112,17 @@ Current DS core status:
 - An ARM7 HALTCNT GBA-mode write switches the console to the GBA core.
 - Empty cartridge slot, SPI firmware flash/power management, RTC, math unit.
 - Unemulated I/O, IME/IE/IF and halt state are listed by `--debug-stats` in DS mode.
-- Without a cartridge, ds-firmware boot runs the real BIOS and firmware when
-  all three images are present: the menu renders, takes buttons and touch, and
-  "Start GBA game" hands off to the GBA core through HALTCNT. Without the
+- The DS menu (and ds-firmware boot without a card) runs the real BIOS and
+  firmware when all three images are present: the menu renders, takes buttons
+  and touch, starts the Slot-1 card through its KEY1 stage, and "Start GBA game"
+  hands off to the GBA core through HALTCNT. Without a card and without the
   images it simulates the Slot-2 pick.
-- VRAM banking, palettes, OAM, and both 2D engines (no 3D, mosaic, or capture).
+- VRAM banking, palettes, OAM, both 2D engines with display capture (no mosaic
+  yet), and the 3D engine (`Gpu3d.cpp` geometry, `Gpu3dRender.cpp` renderer; no
+  fog, edge marking, anti-aliasing, or shadow polygons yet).
 - Direct-booted cartridges read their ROM through the card bus (B7h), keep saves
-  in `<rom>.sav` next to the ROM, and find a stubbed wifi chip and an idle 3D
-  geometry engine. Fire Emblem: Shadow Dragon reaches its menus and story;
-  games that draw with the 3D engine (e.g. Devil Survivor's main screen) show
-  nothing in that layer yet.
+  in `<rom>.sav` next to the ROM, and find a stubbed wifi chip. Fire Emblem:
+  Shadow Dragon plays; Devil Survivor shows its 3D and both screens.
 
 ## 6) Boot Policy (Default BIOS Paths)
 
@@ -147,7 +148,7 @@ Used to validate ROM basics and boot metadata.
 - File: `tests/TestMain.cpp`
 - Contains:
   - In-house GBA memory/CPU/video tests
-  - In-house DS memory/transition scaffold tests
+  - In-house DS CPU, memory, card, video, 3D, and transition tests
   - Runtime kernel integration tests
 
 When adding a feature, add or extend at least one test here.

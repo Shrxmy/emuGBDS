@@ -30,7 +30,7 @@ Goal: stable pitch and sync.
 
 ## Phase 3: DS Core Bring-Up (In-House)
 
-Goal: progress from scaffold to executable ARM9/ARM7 instruction core.
+Goal: an in-house DS core that plays commercial games.
 
 1. Done: shared ARM CPU (ARMv4T/ARMv5TE) running both DS CPUs.
 2. Done: ARM9/ARM7 memory maps with TCM (CP15) and WRAMCNT; direct boot.
@@ -41,14 +41,16 @@ Goal: progress from scaffold to executable ARM9/ARM7 instruction core.
    RTC, math unit, VRAM banking, both 2D engines, buttons and touch. Picking
    "Start GBA game" makes the firmware write HALTCNT and the GBA core takes over.
 5. Done: commercial DS games boot to their menus (cartridge reads, save chip
-   with `.sav` files, wifi stub, 3D status stub). Shadow Dragon plays its menus
-   and story scenes.
+   with `.sav` files, wifi stub). Shadow Dragon plays its menus and story
+   scenes.
 6. Done: DS sound (all channel formats, mixer, capture), paced in real time
    through the audio queue.
-7. Next: the 3D engine (needed by Devil Survivor and many others). The 2D
-   engine now composes per line and fetches per tile (Shadow Dragon about
-   84 fps headless); the ARM interpreter is the next speed target.
-8. Keep Slot-2 transition support as an integration target.
+7. Done: CPU cycle timing on both cores; the real DS menu with both slots
+   (KEY1 card boot, Slot-2 GBA start); display capture; the 3D engine
+   (Devil Survivor shows its graphics). Headless: Shadow Dragon about 179 fps,
+   Devil Survivor about 116 fps.
+8. Next: the remaining 3D features (fog, edge marking, anti-aliasing, shadow
+   polygons), 2D mosaic and the main-memory display FIFO, and save states.
 
 ## Phase 4: Runtime and Tooling
 

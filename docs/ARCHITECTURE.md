@@ -23,10 +23,10 @@ main.cpp
 - `host/third_party/imgui/`: vendored Dear ImGui (see `VERSION.txt`).
 - `host/src/runtime/`: frame loop, input forwarding, and output polling.
 - `host/src/cores/`: adapters implementing the common core interface.
-- `host/src/arm/`: shared ARM CPU interpreter, used by the GBA core and
-  intended for the DS ARM7/ARM9.
+- `host/src/arm/`: shared ARM CPU interpreter, used by the GBA core and the
+  DS ARM7/ARM9.
 - `host/src/ingba/`: GBA implementation.
-- `host/src/inds/`: DS implementation in bring-up (dual CPUs, memory map, CP15).
+- `host/src/inds/`: DS implementation (both CPUs, 2D and 3D video, sound, cartridge, firmware).
 - `host/src/boot/`, `host/src/gba/`, and `host/src/nds/`: boot policy and
   cartridge metadata, independent of CPU execution.
 
@@ -76,24 +76,28 @@ coordinate modules rather than grow new device implementations.
 | `Io.cpp` | per-CPU I/O registers: IME/IE/IF, DISPSTAT/VCOUNT, DMA, keypad, POSTFLG, HALTCNT, POWCNT, EXMEMCNT, VRAMCNT/WRAMCNT |
 | `Ipc.cpp` | IPCSYNC and the two IPC FIFOs with their edge-triggered IRQs |
 | `Timers.cpp` | one CPU's four 33.51 MHz timers with cascade and overflow IRQs |
-| `GameCard.cpp` | Slot-1 card bus: ROM commands (B7h data, chip ID, header) after KEY2 decoding, card DMA, transfer IRQ |
+| `GameCard.cpp` | Slot-1 card bus: the KEY1 stage of a menu boot (secure area), then ROM commands (B7h data, chip ID, header) after KEY2 decoding, card DMA, transfer IRQ |
+| `Key1.cpp` | KEY1 Blowfish: key table from the ARM7 BIOS, secure-area encryption |
 | `Backup.cpp` | cartridge save chip on AUXSPI (EEPROM 0.5K/8K/64K, FLASH), type from the save file or first write, `<rom>.sav` |
 | `Wifi.cpp` | ARM7 wifi stub: registers, Wifi RAM, baseband register file (no radio) |
 | `Sound.cpp` | 16 sound channels (PCM8/PCM16/IMA-ADPCM, PSG, noise) read from memory, mixer with SOUNDCNT routing, master volume and SOUNDBIAS, and both capture units; 32768 Hz stereo |
 | `Spi.cpp` | ARM7 SPI bus: firmware flash (in-memory copy), power management, touchscreen X/Y conversions |
 | `VideoMemory.cpp` | VRAM banks A-I and VRAMCNT mapping, palettes, OAM, extended palette slots |
-| `Engine2d.cpp` | one 2D engine: registers and a scanline renderer (BGs, OBJs, windows, blending, brightness) |
+| `Engine2d.cpp` | one 2D engine: registers and a scanline renderer (BGs, OBJs, windows, blending, brightness), the 3D picture as engine A BG0, display capture |
+| `Gpu3d.cpp` | 3D geometry engine: command FIFO and geometry DMA, matrices and stacks, lighting, vertices, clipping, culling, box/position/vector tests, SWAP_BUFFERS at V-Blank |
+| `Gpu3dRender.cpp` | 3D renderer: rear plane, opaque then translucent polygons, depth buffer, textures in all formats, shading and blending |
 | `Rtc.cpp` | ARM7 bit-banged Seiko RTC on 4000138h, host clock |
-| `MathUnit.cpp` | ARM9 divider and square root; the 3D registers are a stub in `Io.cpp` (idle, empty FIFO) |
+| `MathUnit.cpp` | ARM9 divider and square root |
 | `Cp15.cpp` | ARM9 CP15: ID and control registers, TCM regions, wait for interrupt |
 
 The ARM9's CP15 is owned by the memory object because its TCM settings decide
 the ARM9 memory map. I/O is dispatched per 32-bit register word with a byte-lane
-mask, so side effects (FIFO pops) happen once per access. A loaded cartridge is
-always direct-booted. Without a cartridge, ds-firmware boot runs the real BIOS
-and firmware when all three images are present (otherwise it simulates the
-Slot-2 pick). Both engines render each visible line at H-Blank start into a
-256x384 frame (top screen above bottom, routed by POWCNT1). When the ARM7 writes
+mask, so side effects (FIFO pops) happen once per access. A cartridge is direct-booted
+unless the DS menu is requested; the menu (and ds-firmware boot without a card)
+runs the real BIOS and firmware, which needs all three images (without a card and
+without them, the Slot-2 pick is simulated). Both engines render each visible line at H-Blank start into a
+256x384 frame (top screen above bottom, routed by POWCNT1); the 3D engine renders
+the next frame at line 214. When the ARM7 writes
 HALTCNT power-down mode 1 (GBA mode), the DS core raises the DS -> GBA
 transition, the same event the runtime uses for Slot-2 boot.
 
@@ -110,7 +114,7 @@ The following are intentionally local and ignored:
 
 - `build*` and other generated build trees
 - `bios/` and `roms/`
-- `basis/` and other clean-room reference archives
+- `basis/` for local hardware documentation (GBATEK)
 - IDE metadata and compiler output
 
 Only project-owned source, headers, tests, documentation, and build metadata
