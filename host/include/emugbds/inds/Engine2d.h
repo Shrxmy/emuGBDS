@@ -13,6 +13,9 @@
 
 namespace emugbds::inds {
 
+// 5-bit colour channel -> channel, for brightness effects.
+using ChannelTable = std::array<uint8_t, 32>;
+
 class Engine2d {
 public:
     static constexpr uint32_t kWidth = 256u;
@@ -56,16 +59,19 @@ private:
         uint32_t evb = 0;
         uint32_t evy = 0;
         bool windows = false;
+        std::array<uint8_t, kWidth> window{}; // per-pixel layer masks, when windows are on
+        ChannelTable effect{};                 // BLDCNT brightness up/down by EVY
         uint32_t bg_count = 0;
         std::array<uint8_t, 4> bgs{};         // active BGs, by priority then number
         std::array<uint8_t, 4> bg_priority{};
     };
 
-    LineSetup SetupLine() const noexcept;
-    uint8_t WindowMask(uint32_t x, uint32_t y) const noexcept;
-    uint16_t Compose(uint32_t x, uint32_t y, const LineSetup& setup) const noexcept;
-    // `bright` is MASTER_BRIGHT, read once per line.
-    static uint32_t ToAbgr(uint16_t color, uint16_t bright) noexcept;
+    LineSetup SetupLine(uint32_t y) const noexcept;
+    // Each pixel's visible layers (bits 0-3 BGs, 4 OBJ, 5 effects) on line y.
+    void FillWindowMasks(uint32_t y, std::array<uint8_t, kWidth>& masks) const noexcept;
+    uint16_t Compose(uint32_t x, const LineSetup& setup) const noexcept;
+    // Compose for lines without windows or colour effects: the top layer's colour.
+    uint16_t TopColor(uint32_t x, const LineSetup& setup) const noexcept;
 
     VideoMemory& memory_;
     int engine_;
@@ -77,6 +83,7 @@ private:
     std::array<bool, 4> bg_active_{};
     std::array<ObjPixel, kWidth> obj_line_{};
     std::array<bool, kWidth> obj_window_{};
+    bool obj_blend_ = false; // a semi-transparent or bitmap OBJ was drawn on this line
 };
 
 } // namespace emugbds::inds

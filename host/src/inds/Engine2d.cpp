@@ -30,6 +30,11 @@ constexpr std::array<std::array<uint8_t, 2>, 12> kObjSizes = {{
     {{8, 16}}, {{8, 32}}, {{16, 32}}, {{32, 64}},
 }};
 
+// 15-bit colour `index` of a little-endian palette array.
+int32_t PaletteColor(const uint8_t* colors, uint32_t index) noexcept {
+    return (colors[index * 2u] | (colors[index * 2u + 1u] << 8u)) & 0x7FFF;
+}
+
 int32_t SignExtend28(uint32_t value) noexcept {
     return static_cast<int32_t>(value << 4u) >> 4u;
 }
@@ -44,22 +49,33 @@ uint16_t Blend(uint16_t a, uint16_t b, uint32_t eva, uint32_t evb) noexcept {
     return out;
 }
 
-uint16_t Brighten(uint16_t color, uint32_t factor) noexcept {
-    uint16_t out = 0u;
-    for (uint32_t shift = 0u; shift < 15u; shift += 5u) {
-        const uint32_t channel = (color >> shift) & 31u;
-        out = static_cast<uint16_t>(out | ((channel + (31u - channel) * factor / 16u) << shift));
+// Brightness up (mode 1) or down (mode 2) by factor/16 as a table of 5-bit channels; other modes leave
+// channels unchanged.
+ChannelTable BrightnessTable(uint32_t mode, uint32_t factor) noexcept {
+    ChannelTable table{};
+    for (uint32_t channel = 0u; channel < 32u; ++channel) {
+        table[channel] = static_cast<uint8_t>(mode == 1u ? channel + (31u - channel) * factor / 16u
+            : mode == 2u ? channel - channel * factor / 16u : channel);
     }
-    return out;
+    return table;
 }
 
-uint16_t Darken(uint16_t color, uint32_t factor) noexcept {
-    uint16_t out = 0u;
-    for (uint32_t shift = 0u; shift < 15u; shift += 5u) {
-        const uint32_t channel = (color >> shift) & 31u;
-        out = static_cast<uint16_t>(out | ((channel - channel * factor / 16u) << shift));
+uint16_t ApplyTable(uint16_t color, const ChannelTable& table) noexcept {
+    return static_cast<uint16_t>(table[color & 31u] | (table[(color >> 5u) & 31u] << 5u) | (table[(color >> 10u) & 31u] << 10u));
+}
+
+// MASTER_BRIGHT as a table from 5-bit channels to displayed 8-bit ones.
+ChannelTable DisplayTable(uint16_t bright) noexcept {
+    ChannelTable table = BrightnessTable(bright >> 14u, std::min<uint32_t>(bright & 31u, 16u));
+    for (uint8_t& channel : table) {
+        channel = static_cast<uint8_t>((channel << 3u) | (channel >> 2u));
     }
-    return out;
+    return table;
+}
+
+uint32_t ToAbgr(uint16_t color, const ChannelTable& display) noexcept {
+    return 0xFF000000u | (static_cast<uint32_t>(display[(color >> 10u) & 31u]) << 16u) |
+        (static_cast<uint32_t>(display[(color >> 5u) & 31u]) << 8u) | display[color & 31u];
 }
 
 } // namespace
@@ -139,13 +155,14 @@ void Engine2d::DrawLine(uint32_t y, bool enabled, uint32_t* out) noexcept {
     }
     if (display_mode == 2u) {
         const uint32_t bank = (control >> 18u) & 3u;
+        const ChannelTable display = DisplayTable(Reg16(kMasterBright));
         for (uint32_t x = 0u; x < kWidth; ++x) {
-            out[x] = ToAbgr(memory_.LcdcBank16(bank, y * kWidth + x), Reg16(kMasterBright));
+            out[x] = ToAbgr(memory_.LcdcBank16(bank, y * kWidth + x), display);
         }
         return;
     }
     if (display_mode == 3u) {
-        std::fill(out, out + kWidth, ToAbgr(0u, Reg16(kMasterBright))); // shortcut: main-memory display FIFO not emulated.
+        std::fill(out, out + kWidth, ToAbgr(0u, DisplayTable(Reg16(kMasterBright)))); // shortcut: main-memory display FIFO not emulated.
         return;
     }
     if ((control & (1u << 7)) != 0u) {
@@ -194,14 +211,33 @@ void Engine2d::DrawLine(uint32_t y, bool enabled, uint32_t* out) noexcept {
     }
     obj_line_.fill(ObjPixel{});
     obj_window_.fill(false);
+    obj_blend_ = false;
     if ((control & (1u << 12)) != 0u) {
         RenderObjs(y);
     }
-    const LineSetup setup = SetupLine();
-    const uint16_t bright = Reg16(kMasterBright);
+    const LineSetup setup = SetupLine(y);
+    const ChannelTable display = DisplayTable(Reg16(kMasterBright));
+    // Most lines have no windows, colour effects, or semi-transparent OBJs: the top layer is the pixel.
+    const bool plain_compose = !setup.windows && ((setup.bldcnt >> 6u) & 3u) == 0u && !obj_blend_;
     for (uint32_t x = 0u; x < kWidth; ++x) {
-        out[x] = ToAbgr(Compose(x, y, setup), bright);
+        out[x] = ToAbgr(plain_compose ? TopColor(x, setup) : Compose(x, setup), display);
     }
+}
+
+
+uint16_t Engine2d::TopColor(uint32_t x, const LineSetup& setup) const noexcept {
+    // Compose's layer order with every layer visible: OBJs beat BGs of equal priority.
+    const ObjPixel& obj = obj_line_[x];
+    for (uint32_t i = 0u; i < setup.bg_count; ++i) {
+        if (obj.color >= 0 && obj.priority <= setup.bg_priority[i]) {
+            return static_cast<uint16_t>(obj.color);
+        }
+        const int32_t color = bg_line_[setup.bgs[i]][x];
+        if (color >= 0) {
+            return static_cast<uint16_t>(color);
+        }
+    }
+    return obj.color >= 0 ? static_cast<uint16_t>(obj.color) : setup.backdrop;
 }
 
 
@@ -221,9 +257,11 @@ void Engine2d::RenderTextBg(uint32_t bg, uint32_t y, std::array<int32_t, kWidth>
     const uint32_t sy = (y + vofs) & (height - 1u);
     const Area area = engine_ == 0 ? Area::EngineABg : Area::EngineBBg;
 
-    // One map entry and one tile-row lookup per tile, not per pixel (tiles never cross a 16 KiB page).
+    // One map entry, tile-row and palette lookup per tile, not per pixel (tiles never cross a 16 KiB page).
     const uint32_t tile_bytes = colors256 ? 64u : 32u;
     const uint32_t row_bytes = colors256 ? 8u : 4u;
+    const uint8_t* standard = memory_.palette_data(engine_, false);
+    const uint8_t* extended = ext_palette ? memory_.bg_ext_palette_data(engine_, slot) : nullptr;
     for (uint32_t x = 0u; x < kWidth;) {
         const uint32_t sx = (x + hofs) & (width - 1u);
         const uint32_t block = (sx >> 8u) + (sy >> 8u) * (width >> 8u);
@@ -234,18 +272,17 @@ void Engine2d::RenderTextBg(uint32_t bg, uint32_t y, std::array<int32_t, kWidth>
         const uint32_t py = (entry & 0x800u) != 0u ? 7u - (sy & 7u) : sy & 7u;
         const uint32_t palette = entry >> 12u;
         const uint8_t* row = memory_.Row(area, char_base + tile * tile_bytes + py * row_bytes);
+        // An extended slot with no bank behind it reads as colour 0.
+        const uint8_t* colors = !colors256 ? standard + palette * 32u
+            : !ext_palette ? standard
+            : extended != nullptr ? extended + palette * 512u : nullptr;
         for (uint32_t column = sx & 7u; column < 8u && x < kWidth; ++column, ++x) {
             const uint32_t px = hflip ? 7u - column : column;
-            if (colors256) {
-                const uint8_t index = row != nullptr ? row[px] : 0u;
-                line[x] = index == 0u ? -1
-                    : ext_palette ? memory_.BgExtPalette(engine_, slot, palette * 256u + index) & 0x7FFF
-                    : memory_.Palette(engine_, false, index) & 0x7FFF;
-            } else {
-                const uint8_t pair = row != nullptr ? row[px / 2u] : 0u;
-                const uint32_t index = (px & 1u) != 0u ? pair >> 4u : pair & 15u;
-                line[x] = index == 0u ? -1 : memory_.Palette(engine_, false, palette * 16u + index) & 0x7FFF;
+            uint32_t index = 0u;
+            if (row != nullptr) {
+                index = colors256 ? row[px] : (px & 1u) != 0u ? row[px / 2u] >> 4u : row[px / 2u] & 15u;
             }
+            line[x] = index == 0u ? -1 : colors == nullptr ? 0 : PaletteColor(colors, index);
         }
     }
 }
@@ -368,12 +405,22 @@ void Engine2d::RenderObjs(uint32_t y) noexcept {
         const uint32_t tile = attr2 & 0x3FFu;
         const uint32_t priority = (attr2 >> 10u) & 3u;
         const uint32_t palette = attr2 >> 12u;
+        // Palette for this OBJ: 16 colours of the standard one, all 256, or an extended palette
+        // (nullptr: no bank behind it, reads as colour 0).
+        const uint8_t* standard = memory_.palette_data(engine_, true);
+        const uint8_t* extended = memory_.obj_ext_palette_data(engine_);
+        const uint8_t* colors = !colors256 ? standard + palette * 32u
+            : (control & (1u << 31)) == 0u ? standard
+            : extended != nullptr ? extended + palette * 512u : nullptr;
+        uint32_t cached_row_address = ~0u; // tile row bytes for the pixels just drawn
+        const uint8_t* cached_row = nullptr;
 
-        for (uint32_t sx = 0u; sx < box_w; ++sx) {
+        // Only the part of the box on screen.
+        const uint32_t first = obj_x < 0 ? static_cast<uint32_t>(-obj_x) : 0u;
+        const int32_t visible_end = std::min(static_cast<int32_t>(box_w), static_cast<int32_t>(kWidth) - obj_x);
+        const uint32_t end = visible_end > 0 ? static_cast<uint32_t>(visible_end) : 0u;
+        for (uint32_t sx = first; sx < end; ++sx) {
             const int32_t screen_x = obj_x + static_cast<int32_t>(sx);
-            if (screen_x < 0 || screen_x >= static_cast<int32_t>(kWidth)) {
-                continue;
-            }
             int32_t u = 0;
             int32_t v = 0;
             if (affine) {
@@ -414,18 +461,18 @@ void Engine2d::RenderObjs(uint32_t y) noexcept {
                     // 2D: 32 tiles per row; 256-colour OBJs ignore tile bit 0.
                     address = (colors256 ? tile & ~1u : tile) * 32u + (vv / 8u) * 1024u + (uu / 8u) * tile_bytes;
                 }
-                if (colors256) {
-                    const uint8_t index = memory_.Read8(area, address + (vv & 7u) * 8u + (uu & 7u));
-                    if (index != 0u) {
-                        color = ((control & (1u << 31)) != 0u ? memory_.ObjExtPalette(engine_, palette * 256u + index)
-                                                                : memory_.Palette(engine_, true, index)) & 0x7FFF;
-                    }
-                } else {
-                    const uint8_t pair = memory_.Read8(area, address + (vv & 7u) * 4u + (uu & 7u) / 2u);
-                    const uint32_t index = (uu & 1u) != 0u ? pair >> 4u : pair & 15u;
-                    if (index != 0u) {
-                        color = memory_.Palette(engine_, true, palette * 16u + index) & 0x7FFF;
-                    }
+                const uint32_t row_address = address + (vv & 7u) * (colors256 ? 8u : 4u);
+                if (row_address != cached_row_address) {
+                    cached_row_address = row_address;
+                    cached_row = memory_.Row(area, row_address); // a tile row never crosses a 16 KiB page
+                }
+                uint32_t index = 0u;
+                if (cached_row != nullptr) {
+                    const uint8_t byte = cached_row[colors256 ? uu & 7u : (uu & 7u) / 2u];
+                    index = colors256 ? byte : (uu & 1u) != 0u ? byte >> 4u : byte & 15u;
+                }
+                if (index != 0u) {
+                    color = colors == nullptr ? 0 : PaletteColor(colors, index);
                 }
             }
             if (color < 0) {
@@ -441,6 +488,7 @@ void Engine2d::RenderObjs(uint32_t y) noexcept {
                 pixel.color = color;
                 pixel.priority = static_cast<uint8_t>(priority);
                 pixel.blend = mode == 1u || mode == 3u;
+                obj_blend_ = obj_blend_ || pixel.blend;
                 // shortcut: GBATEK leaves the Alpha-OAM scale undefined; bitmap OBJs blend with EVA = alpha + 1.
                 pixel.alpha = static_cast<uint8_t>(mode == 3u ? palette + 1u : 0u);
             }
@@ -449,30 +497,39 @@ void Engine2d::RenderObjs(uint32_t y) noexcept {
 }
 
 
-uint8_t Engine2d::WindowMask(uint32_t x, uint32_t y) const noexcept {
+void Engine2d::FillWindowMasks(uint32_t y, std::array<uint8_t, kWidth>& masks) const noexcept {
     const uint32_t control = dispcnt();
-    if ((control & 0xE000u) == 0u) {
-        return kAllLayers;
-    }
     const auto inside = [](uint32_t value, uint32_t range) {
         const uint32_t end = range & 0xFFu;
         const uint32_t start = range >> 8u;
         return start <= end ? value >= start && value < end : value >= start || value < end;
     };
-    for (uint32_t window = 0u; window < 2u; ++window) {
-        if ((control & (1u << (13u + window))) != 0u &&
-            inside(x, Reg16(kWin0H + window * 2u)) && inside(y, Reg16(kWin0H + 4u + window * 2u))) {
-            return static_cast<uint8_t>((Reg16(kWinIn) >> (window * 8u)) & kAllLayers);
+    // Lowest priority first, so window 0 lands last: outside, OBJ window, window 1, window 0.
+    masks.fill(static_cast<uint8_t>(Reg16(kWinOut) & kAllLayers));
+    if ((control & (1u << 15)) != 0u) {
+        const uint8_t obj_mask = static_cast<uint8_t>((Reg16(kWinOut) >> 8u) & kAllLayers);
+        for (uint32_t x = 0u; x < kWidth; ++x) {
+            if (obj_window_[x]) {
+                masks[x] = obj_mask;
+            }
         }
     }
-    if ((control & (1u << 15)) != 0u && obj_window_[x]) {
-        return static_cast<uint8_t>((Reg16(kWinOut) >> 8u) & kAllLayers);
+    for (uint32_t window = 2u; window-- > 0u;) {
+        if ((control & (1u << (13u + window))) == 0u || !inside(y, Reg16(kWin0H + 4u + window * 2u))) {
+            continue;
+        }
+        const uint8_t mask = static_cast<uint8_t>((Reg16(kWinIn) >> (window * 8u)) & kAllLayers);
+        const uint16_t range = Reg16(kWin0H + window * 2u);
+        for (uint32_t x = 0u; x < kWidth; ++x) {
+            if (inside(x, range)) {
+                masks[x] = mask;
+            }
+        }
     }
-    return static_cast<uint8_t>(Reg16(kWinOut) & kAllLayers);
 }
 
 
-Engine2d::LineSetup Engine2d::SetupLine() const noexcept {
+Engine2d::LineSetup Engine2d::SetupLine(uint32_t y) const noexcept {
     LineSetup setup;
     setup.backdrop = static_cast<uint16_t>(memory_.Palette(engine_, false, 0u) & 0x7FFFu);
     setup.bldcnt = Reg16(kBldCnt);
@@ -481,6 +538,10 @@ Engine2d::LineSetup Engine2d::SetupLine() const noexcept {
     setup.evb = std::min<uint32_t>((bldalpha >> 8u) & 31u, 16u);
     setup.evy = std::min<uint32_t>(Reg16(kBldY) & 31u, 16u);
     setup.windows = (dispcnt() & 0xE000u) != 0u;
+    if (setup.windows) {
+        FillWindowMasks(y, setup.window);
+    }
+    setup.effect = BrightnessTable(((setup.bldcnt >> 6u) & 3u) - 1u, setup.evy); // BLDCNT modes 2/3: up/down
     for (uint32_t priority = 0u; priority < 4u; ++priority) {
         for (uint32_t bg = 0u; bg < 4u; ++bg) {
             if (bg_active_[bg] && (Reg16(kBgCnt + bg * 2u) & 3u) == priority) {
@@ -494,8 +555,8 @@ Engine2d::LineSetup Engine2d::SetupLine() const noexcept {
 }
 
 
-uint16_t Engine2d::Compose(uint32_t x, uint32_t y, const LineSetup& setup) const noexcept {
-    const uint8_t window = setup.windows ? WindowMask(x, y) : kAllLayers;
+uint16_t Engine2d::Compose(uint32_t x, const LineSetup& setup) const noexcept {
+    const uint8_t window = setup.windows ? setup.window[x] : kAllLayers;
     // Top two visible layers by priority; OBJs beat BGs of equal priority.
     uint32_t layers[2] = {kLayerBackdrop, kLayerBackdrop};
     uint16_t colors[2] = {setup.backdrop, setup.backdrop};
@@ -539,24 +600,13 @@ uint16_t Engine2d::Compose(uint32_t x, uint32_t y, const LineSetup& setup) const
                 color = Blend(colors[0], colors[1], setup.eva, setup.evb);
             }
             break;
-        case 2u: color = Brighten(color, setup.evy); break;
-        case 3u: color = Darken(color, setup.evy); break;
+        case 2u:
+        case 3u: color = ApplyTable(color, setup.effect); break;
         default: break;
         }
     }
     return color;
 }
 
-
-uint32_t Engine2d::ToAbgr(uint16_t color, uint16_t bright) noexcept {
-    const uint32_t factor = std::min<uint32_t>(bright & 31u, 16u);
-    switch (bright >> 14u) {
-    case 1u: color = Brighten(color, factor); break;
-    case 2u: color = Darken(color, factor); break;
-    default: break;
-    }
-    const auto expand = [](uint32_t channel) { return (channel << 3u) | (channel >> 2u); };
-    return 0xFF000000u | (expand((color >> 10u) & 31u) << 16u) | (expand((color >> 5u) & 31u) << 8u) | expand(color & 31u);
-}
 
 } // namespace emugbds::inds

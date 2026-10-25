@@ -41,6 +41,11 @@ public:
     uint16_t ObjExtPalette(int engine, uint32_t index) const noexcept;
     // Standard palettes: engine 0/1, BG then OBJ (256 colours each).
     uint16_t Palette(int engine, bool obj, uint32_t index) const noexcept;
+    // The same palettes and extended palette slots as little-endian colour arrays, for per-pixel
+    // lookups in the renderer; an extended slot is nullptr when no bank provides it.
+    const uint8_t* palette_data(int engine, bool obj) const noexcept { return &palette_[engine * 0x400u + (obj ? 0x200u : 0u)]; }
+    const uint8_t* bg_ext_palette_data(int engine, uint32_t slot) const noexcept { return bg_ext_[engine][slot & 3u]; }
+    const uint8_t* obj_ext_palette_data(int engine) const noexcept { return obj_ext_[engine]; }
     const uint8_t* oam(int engine) const noexcept { return &oam_[engine * 0x400u]; }
     // 16-bit pixel `pixel` of a bank in LCDC mode (VRAM display mode); 0 otherwise.
     uint16_t LcdcBank16(uint32_t bank, uint32_t pixel) const noexcept;
